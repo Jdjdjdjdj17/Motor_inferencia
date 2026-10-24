@@ -160,3 +160,4 @@ Es de día.
 Proyecto para la materia de **Sistemas Expertos / Lógica**.
 
 **Para el profe:** El motor se encuentra en `tableaux_app/core/`. Ahí está toda la lógica de parseo, diccionario atómico, y el motor de tableaux α/β. La interfaz es únicamente para visualización del árbol semántico.
+# Motor-de-inferencia
