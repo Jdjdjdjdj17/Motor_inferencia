@@ -1,0 +1,40 @@
+# Entorno virtual
+.venv/
+venv/
+env/
+ENV/
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribución/paquetes
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Archivos generados por la app
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+
+# Configuración de editores/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Archivos que no corresponden
+19-10-26.txt
