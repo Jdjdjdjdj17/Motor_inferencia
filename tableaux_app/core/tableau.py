@@ -9,7 +9,9 @@ class TableauNode:
     formulas: List[Formula] = field(default_factory=list)
     applied: Set[int] = field(default_factory=set)
     status: str = "open"  # open, closed, internal
-    rule: str = ""  # alpha, beta
+    rule: str = ""  # "α" o "β": qué tipo de expansión creó este nodo
+    generada_por: Optional[Formula] = None  # fórmula del padre que se expandió
+    lado: str = ""  # en una β: "izquierda" o "derecha"
     closes_with: Optional[Tuple[Formula, Formula]] = None
     children: List['TableauNode'] = field(default_factory=list)
     parent_id: Optional[int] = None
@@ -21,12 +23,13 @@ class Tableau:
         self.nodes = {}
         self.registrar(self.root)
     
-    def crear_nodo(self, formulas, parent_id=None, applied=None):
+    def crear_nodo(self, formulas, parent_id=None, applied=None, rule="", generada_por=None, lado=""):
         if applied is None:
             applied_set = set()
         else:
             applied_set = set(applied)
-        n = TableauNode(id=self.next_id, formulas=formulas[:], applied=applied_set, parent_id=parent_id)
+        n = TableauNode(id=self.next_id, formulas=formulas[:], applied=applied_set,
+                        parent_id=parent_id, rule=rule, generada_por=generada_por, lado=lado)
         self.next_id += 1
         return n
     
@@ -171,15 +174,18 @@ class Tableau:
         node.applied.add(pendiente)
         if self.es_alpha(f):
             nuevos = self.expandir_alpha(f)
-            nuevo_nodo = self.crear_nodo(node.formulas + nuevos, parent_id=node.id, applied=node.applied)
+            nuevo_nodo = self.crear_nodo(node.formulas + nuevos, parent_id=node.id,
+                                         applied=node.applied, rule="α", generada_por=f)
             node.children = [nuevo_nodo]
             self.registrar(nuevo_nodo)
             self.chequear_cierre(nuevo_nodo)
             self.expandir_nodo(nuevo_nodo)
         else:
             izq_list, der_list = self.expandir_beta(f)
-            hijo_izq = self.crear_nodo(node.formulas + izq_list, parent_id=node.id, applied=node.applied)
-            hijo_der = self.crear_nodo(node.formulas + der_list, parent_id=node.id, applied=node.applied)
+            hijo_izq = self.crear_nodo(node.formulas + izq_list, parent_id=node.id,
+                                       applied=node.applied, rule="β", generada_por=f, lado="izquierda")
+            hijo_der = self.crear_nodo(node.formulas + der_list, parent_id=node.id,
+                                       applied=node.applied, rule="β", generada_por=f, lado="derecha")
             node.children = [hijo_izq, hijo_der]
             self.registrar(hijo_izq)
             self.registrar(hijo_der)
@@ -190,6 +196,45 @@ class Tableau:
     def expandir(self):
         self.expandir_nodo(self.root)
     
+    def obtener_ramas(self):
+        """Todas las ramas del árbol (abiertas y cerradas), en orden.
+        Cada rama es el camino completo desde la raíz hasta una hoja."""
+        ramas = []
+
+        def dfs(n, camino):
+            camino = camino + [n]
+            if not n.children:
+                ramas.append({
+                    'numero': len(ramas) + 1,
+                    'nodos': camino,
+                    'hoja': n,
+                    'formulas': list(n.formulas),
+                    'estado': 'cerrada' if n.status == 'closed' else 'abierta',
+                    'cierre': n.closes_with,
+                })
+                return
+            for c in n.children:
+                dfs(c, camino)
+
+        dfs(self.root, [])
+        return ramas
+
+    def asignacion_de_rama(self, rama, dicc):
+        """Valores de los átomos en una rama: V si aparece, F si aparece negado,
+        «—» si no aparece (libre)."""
+        asignacion = {}
+        for letra in dicc.atomos:
+            valor = '—'
+            for f in rama['formulas']:
+                if isinstance(f, Atom) and f.id == letra:
+                    valor = 'V'
+                    break
+                if isinstance(f, Not) and isinstance(f.f, Atom) and f.f.id == letra:
+                    valor = 'F'
+                    break
+            asignacion[letra] = valor
+        return asignacion
+
     def obtener_hojas_abiertas(self):
         hojas = []
         def dfs(n):

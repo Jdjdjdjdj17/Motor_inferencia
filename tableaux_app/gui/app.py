@@ -5,13 +5,12 @@ import matplotlib
 matplotlib.use('TkAgg')
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
-import networkx as nx
 
 from tableaux_app.core.parser import texto_a_formulas
 from tableaux_app.core.errores import ErrorSintaxis
 from tableaux_app.core.tableau import Tableau
 from tableaux_app.core.formulas import formula_a_string
-from tableaux_app.gui.render_grafo import RenderGrafo, etiqueta_nodo
+from tableaux_app.gui.render_grafo import RenderGrafo
 
 class App:
     def __init__(self, root):
@@ -42,14 +41,29 @@ class App:
         # Izquierda
         left_frame = ttk.Frame(paned)
         paned.add(left_frame, weight=1)
-        
-        ttk.Label(left_frame, text="Fórmulas y Tabla de Átomos").pack(anchor=tk.W)
-        self.text_info = scrolledtext.ScrolledText(left_frame, height=20, wrap=tk.WORD)
+
+        cuaderno = ttk.Notebook(left_frame)
+        cuaderno.pack(fill=tk.BOTH, expand=True)
+
+        # Pestaña 1: reglas y átomos
+        tab_reglas = ttk.Frame(cuaderno)
+        cuaderno.add(tab_reglas, text="Reglas y átomos")
+        self.text_info = scrolledtext.ScrolledText(tab_reglas, height=20, wrap=tk.WORD)
         self.text_info.pack(fill=tk.BOTH, expand=True)
-        
-        ttk.Label(left_frame, text="Ramas Abiertas / Modelos").pack(anchor=tk.W)
-        self.text_modelos = scrolledtext.ScrolledText(left_frame, height=10, wrap=tk.WORD)
-        self.text_modelos.pack(fill=tk.BOTH)
+
+        # Pestaña 2: todas las ramas
+        tab_ramas = ttk.Frame(cuaderno)
+        cuaderno.add(tab_ramas, text="Ramas")
+        self.text_ramas = scrolledtext.ScrolledText(tab_ramas, height=20, wrap=tk.WORD)
+        self.text_ramas.pack(fill=tk.BOTH, expand=True)
+
+        # Pestaña 3: modelos (ramas abiertas)
+        tab_modelos = ttk.Frame(cuaderno)
+        cuaderno.add(tab_modelos, text="Modelos")
+        self.text_modelos = scrolledtext.ScrolledText(tab_modelos, height=20, wrap=tk.WORD)
+        self.text_modelos.pack(fill=tk.BOTH, expand=True)
+
+        self.cuaderno = cuaderno
         
         # Derecha - grafo
         right_frame = ttk.Frame(paned)
@@ -67,10 +81,11 @@ class App:
     def limpiar(self):
         self.text_input.delete('1.0', tk.END)
         self.text_info.delete('1.0', tk.END)
+        self.text_ramas.delete('1.0', tk.END)
         self.text_modelos.delete('1.0', tk.END)
         self.ax.clear()
         self.canvas.draw()
-    
+
     def generar(self):
         try:
             texto = self.text_input.get('1.0', tk.END)
@@ -83,6 +98,7 @@ class App:
             # Crear tableau
             self.tableau = Tableau(formulas)
             self.tableau.expandir()
+            self.mostrar_ramas()
             self.mostrar_modelos()
             self.dibujar_grafo()
         except ErrorSintaxis as e:
@@ -107,6 +123,52 @@ class App:
         else:
             self.text_info.insert(tk.END, "(sin átomos)\n")
     
+    def mostrar_ramas(self):
+        """Lista TODAS las ramas del árbol, abiertas y cerradas, con su camino."""
+        self.text_ramas.delete('1.0', tk.END)
+        if not self.tableau or not self.dicc:
+            return
+        ramas = self.tableau.obtener_ramas()
+        abiertas = sum(1 for r in ramas if r['estado'] == 'abierta')
+        cerradas = len(ramas) - abiertas
+        self.text_ramas.insert(
+            tk.END,
+            f"{len(ramas)} rama(s): {abiertas} abierta(s), {cerradas} cerrada(s)\n"
+        )
+        self.text_ramas.insert(tk.END, "=" * 46 + "\n")
+
+        for r in ramas:
+            icono = '✓' if r['estado'] == 'abierta' else '✕'
+            self.text_ramas.insert(tk.END, f"\n{icono} RAMA {r['numero']} — {r['estado'].upper()}\n")
+
+            # Camino: qué paso dio cada nodo
+            camino = []
+            for n in r['nodos']:
+                if n.generada_por is None:
+                    camino.append('raíz (reglas iniciales)')
+                else:
+                    lado = f" {n.lado}" if n.lado else ''
+                    camino.append(f"{n.rule} de {formula_a_string(n.generada_por)}{lado}")
+            self.text_ramas.insert(tk.END, "   Camino: " + " → ".join(camino) + "\n")
+
+            self.text_ramas.insert(tk.END, "   Fórmulas acumuladas:\n")
+            for f in r['formulas']:
+                self.text_ramas.insert(tk.END, f"     • {formula_a_string(f)}\n")
+
+            if r['estado'] == 'cerrada':
+                if r['cierre']:
+                    a, b = r['cierre']
+                    self.text_ramas.insert(
+                        tk.END,
+                        f"   ✕ Se cierra: «{formula_a_string(a)}» y «{formula_a_string(b)}»\n"
+                    )
+                else:
+                    self.text_ramas.insert(tk.END, "   ✕ Rama cerrada\n")
+            else:
+                asignacion = self.tableau.asignacion_de_rama(r, self.dicc)
+                partes = [f"{k}={v if v != '—' else 'libre'}" for k, v in asignacion.items()]
+                self.text_ramas.insert(tk.END, "   ✓ Modelo: " + ", ".join(partes) + "\n")
+
     def mostrar_modelos(self):
         self.text_modelos.delete('1.0', tk.END)
         if not self.tableau or not self.dicc:
@@ -134,68 +196,8 @@ class App:
         if not self.tableau:
             self.canvas.draw()
             return
-        from collections import defaultdict, deque
-        G = nx.DiGraph()
-        def dfs(node, parent=None):
-            label = etiqueta_nodo(node, parent)
-            G.add_node(node.id, label=label, status=node.status)
-            if parent is not None:
-                G.add_edge(parent.id, node.id)
-            for c in node.children:
-                dfs(c, node)
-        dfs(self.tableau.root)
-        if len(G.nodes()) == 0:
-            self.canvas.draw()
-            return
-        # Layout jerárquico
-        root_id = self.tableau.root.id
-        niveles = {}
-        padre = {}
-        cola = deque([root_id])
-        padre[root_id] = None
-        orden_bfs = []
-        while cola:
-            actual = cola.popleft()
-            orden_bfs.append(actual)
-            for hijo in G.successors(actual):
-                if hijo not in padre:
-                    padre[hijo] = actual
-                    cola.append(hijo)
-        for nodo in orden_bfs:
-            if padre[nodo] is None:
-                niveles[nodo] = 0
-            else:
-                niveles[nodo] = niveles[padre[nodo]] + 1
-        por_nivel = defaultdict(list)
-        for nodo, nivel in niveles.items():
-            por_nivel[nivel].append(nodo)
-        pos = {}
-        max_nivel = max(por_nivel.keys()) if por_nivel else 0
-        for nivel in range(max_nivel + 1):
-            nodos_nivel = sorted(por_nivel[nivel])
-            n = len(nodos_nivel)
-            if n == 1:
-                xs = [0.5]
-            else:
-                xs = [i / (n - 1) for i in range(n)]
-            for i, nodo in enumerate(nodos_nivel):
-                pos[nodo] = (xs[i], 1.0 - nivel / max(1, max_nivel))
-        node_colors = []
-        for n in G.nodes():
-            status = G.nodes[n].get('status', 'open')
-            if status == 'closed':
-                node_colors.append('#ff6b6b')
-            elif status == 'open':
-                node_colors.append('#51cf66')
-            else:
-                node_colors.append('#ffd43b')
-        nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=2200, alpha=0.95, 
-                               linewidths=2, edgecolors='black', ax=self.ax)
-        nx.draw_networkx_edges(G, pos, arrowstyle='->', arrowsize=15, width=1.5, edge_color='#495057', ax=self.ax)
-        labels = nx.get_node_attributes(G, 'label')
-        nx.draw_networkx_labels(G, pos, labels, font_size=8, font_weight='bold', ax=self.ax)
-        self.ax.set_title('Árbol Semántico (Tableaux) - Ramificaciones α/β', fontsize=10, fontweight='bold')
-        self.ax.axis('off')
+        render = RenderGrafo(self.tableau)
+        render.dibujar_en(self.ax)
         self.canvas.draw()
     
     def guardar(self):

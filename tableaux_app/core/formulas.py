@@ -50,64 +50,47 @@ def complemento(f: Formula) -> Formula:
         return f.f
     return Not(f)
 
-def formula_a_string(f: Formula) -> str:
+def _render(f: Formula):
+    """Devuelve (texto, precedencia) para poder poner paréntesis solo cuando hace falta.
+
+    Precedencia: ¬ (4) > ∧ (3) > ∨ (2) > → (1) > ↔ (0).
+    """
     if isinstance(f, Atom):
-        return f.id
+        return f.id, 5
+
     if isinstance(f, Not):
-        if isinstance(f.f, Atom):
-            return f'¬{f.f.id}'
-        # ¬¬A
-        if isinstance(f.f, Not):
-            return formula_a_string(f.f.f)
-        # Necesita paréntesis para no-(...)
-        inner = formula_a_string(f.f)
-        # Si es binaria compleja
-        if isinstance(f.f, (And, Or, Imp, Iff)):
-            return f'¬({inner})'
-        return f'¬{inner}'
+        inner, prec = _render(f.f)
+        if prec < 4:
+            inner = f'({inner})'
+        return f'¬{inner}', 4
+
     if isinstance(f, And):
-        left_s = formula_a_string(f.left)
-        right_s = formula_a_string(f.right)
-        # Añadir paréntesis si hijo tiene menor precedencia? 
-        # and > or/imp/iff en algunos casos, pero para mostrar bien
-        lpar = ''
-        rpar = ''
-        if isinstance(f.left, (Or, Imp, Iff)):
-            lpar, rpar_left = '(', ')'
-            left_s = '(' + formula_a_string(f.left) + ')'
-        else:
-            left_s = formula_a_string(f.left)
-        if isinstance(f.right, (Or, Imp, Iff)):
-            right_s = '(' + formula_a_string(f.right) + ')'
-        else:
-            right_s = formula_a_string(f.right)
-        return f'{left_s} ∧ {right_s}'
+        return _binaria(f, '∧', 3, 'izquierda')
+
     if isinstance(f, Or):
-        left_s = formula_a_string(f.left)
-        right_s = formula_a_string(f.right)
-        if isinstance(f.left, (Imp, Iff)):
-            left_s = '(' + formula_a_string(f.left) + ')'
-        else:
-            left_s = formula_a_string(f.left)
-        if isinstance(f.right, (Imp, Iff)):
-            right_s = '(' + formula_a_string(f.right) + ')'
-        else:
-            right_s = formula_a_string(f.right)
-        return f'{left_s} ∨ {right_s}'
+        return _binaria(f, '∨', 2, 'izquierda')
+
     if isinstance(f, Imp):
-        left_s = formula_a_string(f.left)
-        right_s = formula_a_string(f.right)
-        if isinstance(f.left, Iff):
-            left_s = '(' + formula_a_string(f.left) + ')'
-        else:
-            left_s = formula_a_string(f.left)
-        if isinstance(f.right, (Imp, Iff)):  # asociativo a derecha pero para claridad
-            right_s = '(' + formula_a_string(f.right) + ')'
-        else:
-            right_s = formula_a_string(f.right)
-        return f'{left_s} → {right_s}'
+        return _binaria(f, '→', 1, 'derecha')
+
     if isinstance(f, Iff):
-        left_s = '(' + formula_a_string(f.left) + ')'
-        right_s = '(' + formula_a_string(f.right) + ')'
-        return f'{left_s} ↔ {right_s}'
-    return str(f)
+        return _binaria(f, '↔', 0, 'ninguna')
+
+    return str(f), 5
+
+
+def _binaria(f, simbolo: str, prec: int, asociatividad: str):
+    """Arma «izq símbolo der» con paréntesis según precedencia y asociatividad."""
+    izq, p_izq = _render(f.left)
+    der, p_der = _render(f.right)
+
+    if p_izq < prec or (p_izq == prec and asociatividad != 'izquierda'):
+        izq = f'({izq})'
+    if p_der < prec or (p_der == prec and asociatividad != 'derecha'):
+        der = f'({der})'
+
+    return f'{izq} {simbolo} {der}', prec
+
+
+def formula_a_string(f: Formula) -> str:
+    return _render(f)[0]

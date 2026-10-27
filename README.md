@@ -11,7 +11,9 @@ Este programa permite:
 - Reconocer conectivos lógicos: `y`, `o`, `no`, `si... entonces`, `si y solo si`.
 - Convertir el texto a fórmulas bien formadas con su respectiva precedencia y paréntesis.
 - Generar el **árbol semántico por reglas α/β**.
-- Marcar ramas cerradas con `✕` y ramas abiertas con `✓`.
+- Mostrar las **reglas iniciales en el nodo raíz** e indicar en cada nodo qué fórmula y regla lo generó.
+- Marcar ramas cerradas con `✕` y ramas abiertas con `✓`, numerando cada rama (`RAMA 1`, `RAMA 2`, ...).
+- Listar **todas las ramas** (abiertas y cerradas) con sus fórmulas acumuladas.
 - Mostrar las **ramas abiertas** con sus respectivas asignaciones de valores (`p = V`, `q = F`, ...).
 - Visualizar todo el árbol como un **grafo jerárquico**.
 
@@ -110,11 +112,16 @@ python run_tableaux.py
 
 1. **Pegar reglas** - Escribe las reglas en lenguaje natural en el recuadro superior. Puedes poner varias, una por línea o separadas por punto.
 2. **Generar Árbol** - Pulsa `Generar Árbol`.
-3. **Revisar resultados** - En el panel izquierdo verás: fórmulas (`R1: ...`), tabla de átomos (`p = ...`), y las ramas abiertas con sus modelos.
-4. **Ver el grafo** - En el panel derecho aparece el árbol semántico jerárquico. 
+3. **Revisar resultados** - El panel izquierdo tiene tres pestañas:
+   - **Reglas y átomos**: fórmulas (`R1: ...`) y tabla de átomos (`p = ...`).
+   - **Ramas**: **todas** las ramas (abiertas y cerradas), con su camino, sus fórmulas acumuladas, el par de cierre o el modelo.
+   - **Modelos**: solo las ramas abiertas con su asignación.
+4. **Ver el grafo** - En el panel derecho aparece el árbol semántico jerárquico.
+   - El **nodo raíz** muestra las **reglas iniciales** completas.
+   - Cada nodo indica qué fórmula y qué regla (**α** o **β**) lo generó.
+   - Cada hoja está numerada como **`RAMA N`** con su estado y, si está abierta, su modelo.
    - **Verde** = Rama abierta (`✓ ABIERTA`)
    - **Rojo** = Rama cerrada (`✕ CERRADA`)
-   - **✓ / ○** = Indican si la fórmula ya fue aplicada en ese nodo
 5. **Guardar imagen** - Con `Guardar Imagen` puedes exportar el grafo a `.png`, `.jpg` o `.pdf`.
 
 ## Ejemplo de prueba
