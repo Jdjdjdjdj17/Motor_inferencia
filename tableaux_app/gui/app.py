@@ -79,13 +79,21 @@ class App:
         self.text_info = scrolledtext.ScrolledText(tab_reglas, height=20, wrap=tk.WORD)
         self.text_info.pack(fill=tk.BOTH, expand=True)
 
-        # Pestaña 2: todas las ramas
+        # Pestaña 2: todas las ramas (detalle técnico)
         tab_ramas = ttk.Frame(cuaderno)
         cuaderno.add(tab_ramas, text="Ramas")
         self.text_ramas = scrolledtext.ScrolledText(tab_ramas, height=20, wrap=tk.WORD)
         self.text_ramas.pack(fill=tk.BOTH, expand=True)
 
-        # Pestaña 3: modelos (ramas abiertas)
+        # Pestaña 3: explicación en palabras
+        tab_explicacion = ttk.Frame(cuaderno)
+        cuaderno.add(tab_explicacion, text="Explicación")
+        self.text_explicacion = scrolledtext.ScrolledText(
+            tab_explicacion, height=20, wrap=tk.WORD
+        )
+        self.text_explicacion.pack(fill=tk.BOTH, expand=True)
+
+        # Pestaña 4: modelos (ramas posibles)
         tab_modelos = ttk.Frame(cuaderno)
         cuaderno.add(tab_modelos, text="Modelos")
         self.text_modelos = scrolledtext.ScrolledText(tab_modelos, height=20, wrap=tk.WORD)
@@ -192,6 +200,7 @@ class App:
         self.text_input.delete('1.0', tk.END)
         self.text_info.delete('1.0', tk.END)
         self.text_ramas.delete('1.0', tk.END)
+        self.text_explicacion.delete('1.0', tk.END)
         self.text_modelos.delete('1.0', tk.END)
         self.ax.clear()
         self.canvas.draw()
@@ -214,6 +223,7 @@ class App:
             self.tableau.expandir()
             self.mostrar_info(formulas, dicc)
             self.mostrar_ramas()
+            self.mostrar_explicacion()
             self.mostrar_modelos()
             self.dibujar_grafo()
         except ErrorSintaxis as e:
@@ -225,10 +235,6 @@ class App:
             import traceback
             traceback.print_exc()
     
-    def _camino_de_rama(self, rama):
-        """Pasos del camino raíz→hoja, explicados con los átomos."""
-        return pasos_de_rama(rama, self.tableau, self.dicc)
-
     def mostrar_info(self, formulas, dicc):
         self.text_info.delete('1.0', tk.END)
         self.text_info.insert(tk.END, "=== FÓRMULAS ===\n")
@@ -255,12 +261,13 @@ class App:
                 tk.END,
                 "No hay ningún camino posible: las reglas se contradicen.\n"
             )
+            self.text_info.insert(
+                tk.END,
+                "\nEl paso a paso en palabras está en la pestaña «Explicación».\n"
+            )
             return
         for r in abiertas:
             self.text_info.insert(tk.END, f"✓ Rama {r['numero']}\n")
-            self.text_info.insert(tk.END, "   Cómo se desarrolló:\n")
-            for i, paso in enumerate(self._camino_de_rama(r), start=1):
-                self.text_info.insert(tk.END, f"     {i}. {paso}\n")
             self.text_info.insert(
                 tk.END,
                 "   Fórmulas (referencia): "
@@ -272,9 +279,13 @@ class App:
             self.text_info.insert(
                 tk.END, "   Valores: " + valores_de_rama(r, self.tableau, dicc) + "\n"
             )
+        self.text_info.insert(
+            tk.END,
+            "\nEl paso a paso en palabras está en la pestaña «Explicación».\n"
+        )
     
     def mostrar_ramas(self):
-        """Lista TODAS las ramas del árbol, posibles y descartadas, en palabras."""
+        """Detalle técnico de TODAS las ramas: camino, fórmulas y cierre/modelo."""
         self.text_ramas.delete('1.0', tk.END)
         if not self.tableau or not self.dicc:
             return
@@ -287,9 +298,6 @@ class App:
             f"{_cantidad(posibles, 'posible', 'posibles')}, "
             f"{_cantidad(descartadas, 'descartada', 'descartadas')}\n"
         )
-        self.text_ramas.insert(
-            tk.END, "Átomos: " + tabla_de_atomos(self.dicc) + "\n"
-        )
         self.text_ramas.insert(tk.END, "=" * 46 + "\n")
 
         for r in ramas:
@@ -300,25 +308,89 @@ class App:
                 tk.END, f"\n{icono} RAMA {r['numero']} — {etiqueta}\n"
             )
 
-            self.text_ramas.insert(tk.END, "   Cómo se desarrolló:\n")
-            for i, paso in enumerate(pasos_de_rama(r, self.tableau, self.dicc), start=1):
-                self.text_ramas.insert(tk.END, f"     {i}. {paso}\n")
+            camino = []
+            for n in r['nodos']:
+                if n.generada_por is None:
+                    camino.append("raíz (reglas iniciales)")
+                else:
+                    lado = f" ({n.lado})" if n.lado else ""
+                    camino.append(
+                        f"regla de {formula_a_string(n.generada_por)}{lado}"
+                    )
+            self.text_ramas.insert(
+                tk.END, "   Camino: " + " → ".join(camino) + "\n"
+            )
 
             self.text_ramas.insert(tk.END, "   Fórmulas acumuladas:\n")
             for f in r['formulas']:
+                self.text_ramas.insert(tk.END, f"     • {formula_a_string(f)}\n")
+
+            if es_posible:
                 self.text_ramas.insert(
+                    tk.END, "   ✓ Modelo: "
+                    + valores_de_rama(r, self.tableau, self.dicc) + "\n"
+                )
+            else:
+                cierre = r.get('cierre')
+                if cierre:
+                    a, b = cierre
+                    self.text_ramas.insert(
+                        tk.END,
+                        f"   ✕ Se descarta: «{formula_a_string(a)}» y "
+                        f"«{formula_a_string(b)}»\n"
+                    )
+                else:
+                    self.text_ramas.insert(
+                        tk.END, "   ✕ Se descarta por una contradicción\n"
+                    )
+
+    def mostrar_explicacion(self):
+        """Explica cómo se formó cada rama usando el nombre de los átomos."""
+        self.text_explicacion.delete('1.0', tk.END)
+        if not self.tableau or not self.dicc:
+            return
+        ramas = self.tableau.obtener_ramas()
+        posibles = sum(1 for r in ramas if r['estado'] == 'abierta')
+        descartadas = len(ramas) - posibles
+        self.text_explicacion.insert(tk.END, "CÓMO SE FORMARON LAS RAMAS\n")
+        self.text_explicacion.insert(
+            tk.END,
+            f"{_cantidad(len(ramas), 'rama', 'ramas')}: "
+            f"{_cantidad(posibles, 'posible', 'posibles')}, "
+            f"{_cantidad(descartadas, 'descartada', 'descartadas')}\n"
+        )
+        self.text_explicacion.insert(
+            tk.END, "Átomos: " + tabla_de_atomos(self.dicc) + "\n"
+        )
+        self.text_explicacion.insert(tk.END, "=" * 46 + "\n")
+
+        for r in ramas:
+            es_posible = r['estado'] == 'abierta'
+            icono = '✓' if es_posible else '✕'
+            etiqueta = 'POSIBLE' if es_posible else 'SE DESCARTA'
+            self.text_explicacion.insert(
+                tk.END, f"\n{icono} RAMA {r['numero']} — {etiqueta}\n"
+            )
+
+            self.text_explicacion.insert(tk.END, "   Cómo se desarrolló:\n")
+            for i, paso in enumerate(pasos_de_rama(r, self.tableau, self.dicc), start=1):
+                self.text_explicacion.insert(tk.END, f"     {i}. {paso}\n")
+
+            self.text_explicacion.insert(tk.END, "   Fórmulas acumuladas:\n")
+            for f in r['formulas']:
+                self.text_explicacion.insert(
                     tk.END, f"     • {formula_y_lectura(f, self.dicc)}\n"
                 )
 
-            self.text_ramas.insert(
+            self.text_explicacion.insert(
                 tk.END, f"   {icono} "
                 + resultado_de_rama(r, self.tableau, self.dicc) + "\n"
             )
             if es_posible:
-                self.text_ramas.insert(
+                self.text_explicacion.insert(
                     tk.END, "   " + modelo_en_palabras(r, self.tableau, self.dicc) + "\n"
                 )
-                self.text_ramas.insert(
+                self.text_explicacion.insert(
                     tk.END, "   Valores: "
                     + valores_de_rama(r, self.tableau, self.dicc) + "\n"
                 )

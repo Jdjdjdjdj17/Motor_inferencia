@@ -12,9 +12,10 @@ Este programa permite:
 - Convertir el texto a fórmulas bien formadas con su respectiva precedencia y paréntesis.
 - Generar el **árbol semántico por reglas α/β**.
 - Mostrar las **reglas iniciales en el nodo raíz** y, en cada nodo, **solo lo que agrega su regla**, sin repetir las fórmulas anteriores.
-- Marcar ramas cerradas con `✕` y ramas abiertas con `✓`, numerando cada rama (`RAMA 1`, `RAMA 2`, ...).
-- Listar **todas las ramas** (abiertas y cerradas) con sus fórmulas acumuladas.
-- Mostrar las **ramas abiertas** con sus respectivas asignaciones de valores (`p = V`, `q = F`, ...).
+- Marcar ramas posibles con `✓` y ramas descartadas con `✕`, numerando cada rama (`RAMA 1`, `RAMA 2`, ...).
+- Listar **todas las ramas** con sus fórmulas acumuladas y el motivo de descarte o su modelo.
+- Explicar **cómo se formó cada rama** paso a paso usando el nombre de los átomos, en una pestaña aparte.
+- Mostrar las **ramas posibles** con sus respectivas asignaciones de valores (`p = V`, `q = F`, ...).
 - Visualizar todo el árbol como un **grafo jerárquico**.
 
 ## Estructura del proyecto
@@ -115,9 +116,10 @@ python run_tableaux.py
 
 1. **Pegar reglas** - Escribe las reglas en lenguaje natural en el recuadro superior. Puedes poner varias, una por línea o separadas por punto.
 2. **Generar Árbol** - Pulsa `Generar Árbol`.
-3. **Revisar resultados** - El panel izquierdo tiene tres pestañas:
-   - **Reglas y átomos**: fórmulas (`R1: ...`) con su lectura en palabras, tabla de átomos (`p = ...`) y el **camino correcto** (cada rama posible, paso a paso, con su modelo).
-   - **Ramas**: **todas** las ramas (posibles y descartadas), explicadas paso a paso con los átomos, con sus fórmulas acumuladas y el modelo o la contradicción.
+3. **Revisar resultados** - El panel izquierdo tiene cuatro pestañas:
+   - **Reglas y átomos**: fórmulas (`R1: ...`) con su lectura en palabras, tabla de átomos (`p = ...`) y el **camino correcto** (resumen de cada rama posible con su modelo).
+   - **Ramas**: detalle técnico de **todas** las ramas (posibles y descartadas): camino, fórmulas acumuladas y cierre o modelo.
+   - **Explicación**: **todas** las ramas explicadas paso a paso con los átomos, sus fórmulas en palabras, el motivo de descarte y el modelo natural.
    - **Modelos**: solo las ramas posibles, con la asignación en palabras y en letras.
 4. **Ver el grafo** - En el panel derecho aparece el árbol semántico jerárquico.
    - El **nodo raíz** muestra las **reglas iniciales** completas.
@@ -164,7 +166,7 @@ Es de día.
    - **Tipo α** (`∧`, `¬∨`, `¬→`, `¬¬`): Se añaden al mismo nodo (no bifurcan)
    - **Tipo β** (`∨`, `→`, `↔`, `¬∧`, `¬↔`): Bifurcan el árbol en dos ramas
 7. **Cierre** - Si en una rama aparece un átomo y su negación, se cierra con `✕`.
-8. **Modelos** - Al terminar, se extraen las asignaciones de las ramas abiertas.
+8. **Modelos** - Al terminar, se extraen las asignaciones de las ramas posibles.
 
 ## Notas para desarrollo
 
