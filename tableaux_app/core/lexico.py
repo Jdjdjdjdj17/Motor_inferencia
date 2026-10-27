@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
-from tableaux_app.utils.normalizar import a_minusculas_sin_tildes, quitar_tildes
+from typing import List
+from tableaux_app.utils.normalizar import a_minusculas_sin_tildes
+from tableaux_app.core.errores import ErrorSintaxis
 
-# Operadores ordenados por longitud DESC (longest match)
+# Conectivos en español. Al comparar se normalizan (sin tildes) y se prueban
+# del más largo al más corto (longest match), así "si y solo si" gana a "si".
 OPERADORES_TEXTO = [
     ("si y solo si", "IFF"),
     ("si y solo cuando", "IFF"),
@@ -14,15 +16,13 @@ OPERADORES_TEXTO = [
     ("cuando", "IF"),
     ("en caso de que", "IF"),
     ("siempre que", "IF"),
-    ("porque", "IF"),  # invertido más tarde
-    ("por lo tanto", "THEN"),  # menos comun como separador, pero por si acaso
+    ("porque", "IF"),
+    ("por lo tanto", "THEN"),
     ("luego", "THEN"),
     ("implica", "IMP"),
     ("y", "AND"),
     ("e", "AND"),
-    ("ademas", "AND"),
     ("además", "AND"),
-    ("tambien", "AND"),
     ("también", "AND"),
     ("pero", "AND"),
     ("o", "OR"),
@@ -30,9 +30,19 @@ OPERADORES_TEXTO = [
     ("no", "NOT"),
     ("nunca", "NOT"),
     ("jamás", "NOT"),
-    ("jamás", "NOT"),
-    ("ni", "NOT"),  # caso especial
+    ("ni", "NOT"),
 ]
+
+_OPS = sorted(
+    ((a_minusculas_sin_tildes(txt), tipo, txt) for txt, tipo in OPERADORES_TEXTO),
+    key=lambda x: len(x[0]),
+    reverse=True,
+)
+
+# Signos que no aportan nada a la lógica y se pueden ignorar sin perder información.
+# Cualquier otro carácter raro (%, &, /, +...) lanza un error en vez de borrarse en silencio.
+PUNTUACION_IGNORADA = set('¿?¡!"\'“”‘’«»:-–—`´')
+
 
 @dataclass
 class Token:
@@ -40,55 +50,50 @@ class Token:
     valor: str
     texto_original: str = ""
 
+
+def _agregar_separador(tokens: List[Token], simbolo: str) -> None:
+    """Agrega un separador de reglas, sin duplicarlo ni ponerlo al inicio."""
+    if tokens and tokens[-1].tipo != 'COMMA':
+        tokens.append(Token('COMMA', ',', simbolo))
+
+
 def tokenizar_conectores(texto: str) -> List[Token]:
     """
     Tokeniza buscando conectores por longest match.
     Lo demás se queda como ATOM_TEXT.
+    Un salto de línea cuenta como separador de reglas (como un punto).
     """
     s = a_minusculas_sin_tildes(texto)
     tokens: List[Token] = []
     i = 0
     n = len(s)
-    
-    # Crear lista ordenada por longitud
-    ops = list(OPERADORES_TEXTO)
-    ops_sorted = sorted(ops, key=lambda x: len(a_minusculas_sin_tildes(x[0])), reverse=True)
-    
+
     while i < n:
-        # Saltar espacios
-        if s[i].isspace():
+        c = s[i]
+        if c == '\n':
+            _agregar_separador(tokens, '\n')
             i += 1
             continue
-        # Puntuación
-        if s[i] == '(':
+        if c.isspace():
+            i += 1
+            continue
+        if c == '(':
             tokens.append(Token('LPAREN', '(', '('))
             i += 1
             continue
-        if s[i] == ')':
+        if c == ')':
             tokens.append(Token('RPAREN', ')', ')'))
             i += 1
             continue
-        if s[i] == ',':
-            tokens.append(Token('COMMA', ',', ','))
+        if c in ',;.':
+            _agregar_separador(tokens, c)
             i += 1
             continue
-        if s[i] == ';':
-            tokens.append(Token('COMMA', ',', ';'))  # tratar como separador
-            i += 1
-            continue
-        if s[i] == '.':
-            tokens.append(Token('COMMA', ',', '.'))
-            i += 1
-            continue
-        
-        # Intentar longest match de operador
+
         matched = False
-        for op_texto, op_tipo in ops_sorted:
-            op_norm = a_minusculas_sin_tildes(op_texto)
+        for op_norm, op_tipo, op_texto in _OPS:
             if s.startswith(op_norm, i):
-                # Verificar que es palabra completa (o empieza/termina apropiadamente)
-                # Chequear límite anterior
-                antes_ok = (i == 0 or not s[i-1].isalnum())
+                antes_ok = (i == 0 or not s[i - 1].isalnum())
                 despues_idx = i + len(op_norm)
                 despues_ok = (despues_idx >= n or not s[despues_idx].isalnum())
                 if antes_ok and despues_ok:
@@ -98,9 +103,8 @@ def tokenizar_conectores(texto: str) -> List[Token]:
                     break
         if matched:
             continue
-        
-        # Leer palabra / átomo
-        if s[i].isalnum() or s[i] == '_':
+
+        if c.isalnum() or c == '_':
             j = i
             while j < n and (s[j].isalnum() or s[j] == '_'):
                 j += 1
@@ -108,8 +112,12 @@ def tokenizar_conectores(texto: str) -> List[Token]:
             tokens.append(Token('ATOM_TEXT', word, word))
             i = j
             continue
-        
-        i += 1  # skip unknown
-    
+
+        if c in PUNTUACION_IGNORADA:
+            i += 1
+            continue
+
+        raise ErrorSintaxis(f"No reconozco el carácter «{c}». Escribe las reglas solo con palabras y conectivos.")
+
     tokens.append(Token('EOF', 'EOF', ''))
     return tokens

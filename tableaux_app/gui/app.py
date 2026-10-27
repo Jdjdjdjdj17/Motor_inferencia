@@ -8,9 +8,10 @@ from matplotlib.figure import Figure
 import networkx as nx
 
 from tableaux_app.core.parser import texto_a_formulas
+from tableaux_app.core.errores import ErrorSintaxis
 from tableaux_app.core.tableau import Tableau
 from tableaux_app.core.formulas import formula_a_string
-from tableaux_app.gui.render_grafo import RenderGrafo
+from tableaux_app.gui.render_grafo import RenderGrafo, etiqueta_nodo
 
 class App:
     def __init__(self, root):
@@ -74,6 +75,9 @@ class App:
         try:
             texto = self.text_input.get('1.0', tk.END)
             formulas, dicc = texto_a_formulas(texto)
+            if not formulas:
+                messagebox.showwarning("Aviso", "Escribe al menos una regla.")
+                return
             self.dicc = dicc
             self.mostrar_info(formulas, dicc)
             # Crear tableau
@@ -81,6 +85,8 @@ class App:
             self.tableau.expandir()
             self.mostrar_modelos()
             self.dibujar_grafo()
+        except ErrorSintaxis as e:
+            messagebox.showwarning("No pude entender las reglas", str(e))
         except Exception as e:
             messagebox.showerror("Error", str(e))
             import traceback
@@ -115,7 +121,7 @@ class App:
         for i, m in enumerate(modelos):
             self.text_modelos.insert(tk.END, f"Modelo {i+1}: ")
             partes = []
-            for letra in sorted(m.keys()):
+            for letra in m:
                 val = m[letra]
                 if val == '—':
                     partes.append(f"{letra}=libre")
@@ -131,20 +137,12 @@ class App:
         from collections import defaultdict, deque
         G = nx.DiGraph()
         def dfs(node, parent=None):
-            formulas_str = []
-            for idx, f in enumerate(node.formulas):
-                marca = '✓' if idx in node.applied else '○'
-                formulas_str.append(f'{marca} {formula_a_string(f)}')
-            label = '\n'.join(formulas_str)
-            if node.status == 'closed':
-                label += '\n✕ CERRADA'
-            elif node.status == 'open' and len(node.children) == 0:
-                label += '\n✓ ABIERTA'
+            label = etiqueta_nodo(node, parent)
             G.add_node(node.id, label=label, status=node.status)
             if parent is not None:
-                G.add_edge(parent, node.id)
+                G.add_edge(parent.id, node.id)
             for c in node.children:
-                dfs(c, node.id)
+                dfs(c, node)
         dfs(self.tableau.root)
         if len(G.nodes()) == 0:
             self.canvas.draw()
@@ -195,7 +193,7 @@ class App:
                                linewidths=2, edgecolors='black', ax=self.ax)
         nx.draw_networkx_edges(G, pos, arrowstyle='->', arrowsize=15, width=1.5, edge_color='#495057', ax=self.ax)
         labels = nx.get_node_attributes(G, 'label')
-        nx.draw_networkx_labels(G, pos, labels, font_size=5, font_weight='bold', ax=self.ax)
+        nx.draw_networkx_labels(G, pos, labels, font_size=8, font_weight='bold', ax=self.ax)
         self.ax.set_title('Árbol Semántico (Tableaux) - Ramificaciones α/β', fontsize=10, fontweight='bold')
         self.ax.axis('off')
         self.canvas.draw()

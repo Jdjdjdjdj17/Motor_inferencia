@@ -53,6 +53,23 @@ def layout_arbol_jerarquico(G, root):
     return pos
 
 
+def etiqueta_nodo(node, parent=None):
+    """Texto de un nodo: solo lo nuevo de este paso, no todo el camino anterior.
+    La raíz muestra las reglas iniciales; cada hijo, solo las fórmulas que se agregaron
+    al expandir la fórmula de su padre (en una rama β: p y ¬p, por ejemplo)."""
+    nuevas = node.formulas if parent is None else node.formulas[len(parent.formulas):]
+    lineas = [formula_a_string(f) for f in nuevas]
+    if node.status == 'closed':
+        if node.closes_with:
+            a, b = node.closes_with
+            lineas.append(f'✕ CERRADA ({formula_a_string(a)}, {formula_a_string(b)})')
+        else:
+            lineas.append('✕ CERRADA')
+    elif node.status == 'open' and len(node.children) == 0:
+        lineas.append('✓ ABIERTA')
+    return '\n'.join(lineas)
+
+
 class RenderGrafo:
     def __init__(self, tableau: Tableau):
         self.tableau = tableau
@@ -61,20 +78,12 @@ class RenderGrafo:
     def construir_grafo(self):
         self.G.clear()
         def dfs(node, parent=None):
-            formulas_str = []
-            for idx, f in enumerate(node.formulas):
-                marca = '✓' if idx in node.applied else '○'
-                formulas_str.append(f'{marca} {formula_a_string(f)}')
-            label = '\n'.join(formulas_str)
-            if node.status == 'closed':
-                label += '\n✕ CERRADA'
-            elif node.status == 'open' and len(node.children) == 0:
-                label += '\n✓ ABIERTA'
+            label = etiqueta_nodo(node, parent)
             self.G.add_node(node.id, label=label, status=node.status)
             if parent is not None:
-                self.G.add_edge(parent, node.id)
+                self.G.add_edge(parent.id, node.id)
             for c in node.children:
-                dfs(c, node.id)
+                dfs(c, node)
         dfs(self.tableau.root)
         return self.G
     
@@ -97,7 +106,7 @@ class RenderGrafo:
                                linewidths=2, edgecolors='black')
         nx.draw_networkx_edges(G, pos, arrowstyle='->', arrowsize=25, width=2, edge_color='#495057')
         labels = nx.get_node_attributes(G, 'label')
-        nx.draw_networkx_labels(G, pos, labels, font_size=7, font_weight='bold')
+        nx.draw_networkx_labels(G, pos, labels, font_size=10, font_weight='bold')
         plt.title('Árbol Semántico (Tableaux) - Ramificaciones α/β', fontsize=14, fontweight='bold')
         plt.axis('off')
         plt.tight_layout()
@@ -122,7 +131,7 @@ class RenderGrafo:
                                linewidths=2, edgecolors='black')
         nx.draw_networkx_edges(G, pos, arrowstyle='->', arrowsize=25, width=2, edge_color='#495057')
         labels = nx.get_node_attributes(G, 'label')
-        nx.draw_networkx_labels(G, pos, labels, font_size=6, font_weight='bold')
+        nx.draw_networkx_labels(G, pos, labels, font_size=9, font_weight='bold')
         plt.title('Árbol Semántico (Tableaux) - Ramificaciones α/β', fontsize=16, fontweight='bold')
         plt.axis('off')
         plt.tight_layout()

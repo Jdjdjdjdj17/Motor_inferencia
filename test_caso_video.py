@@ -25,7 +25,7 @@ if len(hojas) == 0:
 else:
     for i,m in enumerate(modelos):
         partes = []
-        for letra in sorted(m.keys()):
+        for letra in m:
             v = m[letra]
             if v == '—': partes.append(f"{letra}=libre")
             else: partes.append(f"{letra}={v}")
