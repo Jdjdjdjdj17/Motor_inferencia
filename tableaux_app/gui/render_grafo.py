@@ -77,44 +77,36 @@ def layout_arbol_jerarquico(G, root):
 
 
 def etiqueta_nodo(node, parent=None, numero_rama=None, modelo=None):
-    """Texto de un nodo.
+    """Texto de un nodo: el camino acumulado que van construyendo las reglas.
 
-    La raíz muestra TODAS las reglas iniciales. Cada hijo muestra solo lo que
-    añadió su expansión (así se ve el camino de cada rama), junto con la fórmula
-    y el tipo de regla (α/β) que lo generó. Las hojas llevan número de rama y,
-    si están abiertas, su modelo.
+    - Raíz: las reglas iniciales completas.
+    - Cada hijo: repite el camino anterior y marca con «+» lo que añadió la
+      regla aplicada, para que se vea cómo se construye la rama.
+    - Hoja: indica si la rama está abierta (con su modelo) o cerrada (con el par
+      de literales que la cierra).
     """
     lineas = []
+    es_hoja = len(node.children) == 0
 
     if parent is None:
         lineas.append('REGLAS INICIALES')
-    elif node.generada_por is not None:
-        tipo = node.rule or 'α'
-        lado = f', rama {node.lado}' if node.lado else ''
-        lineas.append(f'{tipo} de {formula_a_string(node.generada_por)}{lado}')
-
-    if parent is None:
-        nuevas = node.formulas
+        lineas.extend(formula_a_string(f) for f in node.formulas)
     else:
+        previas = node.formulas[:len(parent.formulas)]
         nuevas = node.formulas[len(parent.formulas):]
+        lineas.extend(formula_a_string(f) for f in previas)
+        lineas.extend(f'+ {formula_a_string(f)}' for f in nuevas)
 
-    lineas.extend(formula_a_string(f) for f in nuevas)
-
-    es_hoja = len(node.children) == 0
-    if es_hoja and numero_rama is not None:
-        lineas.insert(0, f'RAMA {numero_rama}')
-
+    rama = f'RAMA {numero_rama} ' if numero_rama is not None else ''
     if node.status == 'closed':
+        lineas.append(f'✕ {rama}CERRADA')
         if node.closes_with:
             a, b = node.closes_with
-            lineas.append(f'✕ CERRADA ({formula_a_string(a)}, {formula_a_string(b)})')
-        else:
-            lineas.append('✕ CERRADA')
+            lineas.append(f'({formula_a_string(a)}, {formula_a_string(b)})')
     elif es_hoja:
+        lineas.append(f'✓ {rama}ABIERTA')
         if modelo:
-            lineas.append(f'✓ ABIERTA ({modelo})')
-        else:
-            lineas.append('✓ ABIERTA')
+            lineas.append(f'({modelo})')
 
     return '\n'.join(lineas)
 
@@ -158,29 +150,30 @@ class RenderGrafo:
         hojas = max(1, sum(1 for n in G.nodes() if G.out_degree(n) == 0))
 
         if font_size is None:
-            font_size = max(6, min(11, 90 // max(hojas, niveles // 2 + 1)))
+            font_size = max(7, min(9, 70 // max(hojas, niveles // 2 + 1)))
 
-        colores = []
+        # Color del bloque según el estado del nodo
+        colores = {}
         for n in G.nodes():
-            estado = G.nodes[n].get('status', 'open')
-            if estado == 'closed':
-                colores.append('#ff8787')   # rojo: rama cerrada
-            elif estado == 'open':
-                colores.append('#8ce99a')   # verde: rama abierta
+            if G.nodes[n].get('status') == 'closed':
+                colores[n] = '#ffc9c9'      # rojo suave: rama cerrada
+            elif G.out_degree(n) == 0:
+                colores[n] = '#b2f2bb'      # verde suave: rama abierta
             else:
-                colores.append('#ffe066')   # amarillo: nodo interno
+                colores[n] = '#fff3bf'      # amarillo suave: nodo interno
 
-        # Nodos con tamaño proporcional al texto para que no se solapen
-        size = 2600 if font_size >= 9 else 2000
-        nx.draw_networkx_nodes(G, pos, node_color=colores, node_size=size, alpha=0.95,
-                               linewidths=2, edgecolors='#212529', ax=ax)
-        nx.draw_networkx_edges(G, pos, arrowstyle='-|>', arrowsize=18, width=1.8,
-                               edge_color='#495057', ax=ax)
+        # Solo las flechas: el nodo es el propio bloque de texto del camino
+        nx.draw_networkx_edges(G, pos, arrowstyle='-|>', arrowsize=16, width=1.6,
+                               edge_color='#495057', ax=ax, node_size=0)
+
         labels = nx.get_node_attributes(G, 'label')
-        nx.draw_networkx_labels(
-            G, pos, labels, font_size=font_size, font_weight='bold', ax=ax,
-            bbox=dict(boxstyle='round,pad=0.25', facecolor='white', edgecolor='none', alpha=0.75),
-        )
+        for n, (x, y) in pos.items():
+            ax.text(
+                x, y, labels[n], fontsize=font_size, fontweight='bold',
+                ha='center', va='center', zorder=3,
+                bbox=dict(boxstyle='round,pad=0.45', facecolor=colores[n],
+                          edgecolor='#212529', linewidth=1.2),
+            )
 
         ax.set_title('Árbol Semántico (Tableaux) — ramas α/β', fontsize=13, fontweight='bold')
         ax.set_axis_off()
@@ -200,9 +193,11 @@ class RenderGrafo:
         # El lienzo crece con el árbol para que quepa todo
         if figsize is None:
             hojas = max(1, sum(1 for n in G.nodes() if G.out_degree(n) == 0))
-            alto = max(8, 2.2 * (len(G.nodes()) ** 0.55))
-            ancho = max(9, 2.6 * hojas ** 0.8)
-            figsize = (min(ancho, 40), min(alto, 40))
+            niveles = nx.dag_longest_path_length(G) + 1
+            # Cada nivel necesita altura para el bloque del camino
+            alto = max(8, 2.4 * niveles + 1.5)
+            ancho = max(10, 3.8 * hojas ** 0.85)
+            figsize = (min(ancho, 44), min(alto, 44))
         fig = plt.figure(figsize=figsize)
         ax = fig.add_subplot(111)
         self.dibujar_en(ax)
