@@ -2,44 +2,7 @@
 import networkx as nx
 import matplotlib.pyplot as plt
 from tableaux_app.core.tableau import Tableau
-from tableaux_app.core.formulas import (
-    Atom, Not, And, Or, Imp, Iff, formula_a_string,
-)
-
-
-def _letras_de(f, acc):
-    """Recorre una fórmula y acumula los id de sus átomos en orden de aparición."""
-    if isinstance(f, Atom):
-        acc.append(f.id)
-    elif isinstance(f, Not):
-        _letras_de(f.f, acc)
-    elif isinstance(f, (And, Or, Imp, Iff)):
-        _letras_de(f.left, acc)
-        _letras_de(f.right, acc)
-
-
-def _modelo_texto(rama, formulas_iniciales):
-    """Modelo parcial de una rama como texto: p=V, q=F, r=libre."""
-    letras = []
-    for f in formulas_iniciales:
-        _letras_de(f, letras)
-    vistas = []
-    for letra in letras:
-        if letra not in vistas:
-            vistas.append(letra)
-
-    partes = []
-    for letra in vistas:
-        valor = 'libre'
-        for f in rama['formulas']:
-            if isinstance(f, Atom) and f.id == letra:
-                valor = 'V'
-                break
-            if isinstance(f, Not) and isinstance(f.f, Atom) and f.f.id == letra:
-                valor = 'F'
-                break
-        partes.append(f'{letra}={valor}')
-    return ', '.join(partes)
+from tableaux_app.core.formulas import formula_a_string
 
 
 def layout_arbol_jerarquico(G, root):
@@ -76,14 +39,13 @@ def layout_arbol_jerarquico(G, root):
     return pos
 
 
-def etiqueta_nodo(node, parent=None, numero_rama=None, modelo=None):
-    """Texto de un nodo: el camino acumulado que van construyendo las reglas.
+def etiqueta_nodo(node, parent=None, numero_rama=None):
+    """Texto de un nodo, solo con lo que agrega ese paso (sin acumular).
 
     - Raíz: las reglas iniciales completas.
-    - Cada hijo: repite el camino anterior y marca con «+» lo que añadió la
-      regla aplicada, para que se vea cómo se construye la rama.
-    - Hoja: indica si la rama está abierta (con su modelo) o cerrada (con el par
-      de literales que la cierra).
+    - Cada hijo: el tipo de regla que lo generó (α o β) y las fórmulas nuevas.
+    - Hoja: su número de rama y un ✓ si está abierta o una ✕ si está cerrada.
+      El color del bloque (verde/rojo) refuerza el estado sin escribir palabras.
     """
     lineas = []
     es_hoja = len(node.children) == 0
@@ -92,21 +54,19 @@ def etiqueta_nodo(node, parent=None, numero_rama=None, modelo=None):
         lineas.append('REGLAS INICIALES')
         lineas.extend(formula_a_string(f) for f in node.formulas)
     else:
-        previas = node.formulas[:len(parent.formulas)]
         nuevas = node.formulas[len(parent.formulas):]
-        lineas.extend(formula_a_string(f) for f in previas)
-        lineas.extend(f'+ {formula_a_string(f)}' for f in nuevas)
+        if nuevas:
+            tipo = node.rule or 'α'
+            textos = ', '.join(formula_a_string(f) for f in nuevas)
+            lineas.append(f'{tipo}: {textos}')
 
-    rama = f'RAMA {numero_rama} ' if numero_rama is not None else ''
+    if es_hoja and numero_rama is not None and parent is not None:
+        lineas.insert(0, f'RAMA {numero_rama}')
+
     if node.status == 'closed':
-        lineas.append(f'✕ {rama}CERRADA')
-        if node.closes_with:
-            a, b = node.closes_with
-            lineas.append(f'({formula_a_string(a)}, {formula_a_string(b)})')
+        lineas.append('✕')
     elif es_hoja:
-        lineas.append(f'✓ {rama}ABIERTA')
-        if modelo:
-            lineas.append(f'({modelo})')
+        lineas.append('✓')
 
     return '\n'.join(lineas)
 
@@ -119,16 +79,11 @@ class RenderGrafo:
     def construir_grafo(self):
         self.G.clear()
         ramas = self.tableau.obtener_ramas()
-        # Número de rama y modelo para etiquetar las hojas
+        # Número de rama para etiquetar las hojas
         numero_rama = {r['hoja'].id: r['numero'] for r in ramas}
-        modelo_rama = {
-            r['hoja'].id: _modelo_texto(r, self.tableau.root.formulas)
-            for r in ramas if r['estado'] == 'abierta'
-        }
 
         def dfs(node, parent=None):
-            label = etiqueta_nodo(node, parent, numero_rama.get(node.id),
-                                  modelo_rama.get(node.id))
+            label = etiqueta_nodo(node, parent, numero_rama.get(node.id))
             self.G.add_node(node.id, label=label, status=node.status)
             if parent is not None:
                 self.G.add_edge(parent.id, node.id)
@@ -150,19 +105,23 @@ class RenderGrafo:
         hojas = max(1, sum(1 for n in G.nodes() if G.out_degree(n) == 0))
 
         if font_size is None:
-            font_size = max(7, min(9, 70 // max(hojas, niveles // 2 + 1)))
+            font_size = max(7, min(11, 90 // max(hojas, niveles // 2 + 1)))
 
-        # Color del bloque según el estado del nodo
+        # Color y borde del bloque según el estado del nodo
         colores = {}
+        bordes = {}
         for n in G.nodes():
             if G.nodes[n].get('status') == 'closed':
-                colores[n] = '#ffc9c9'      # rojo suave: rama cerrada
+                colores[n] = '#ffa8a8'      # rojo: rama cerrada
+                bordes[n] = '#c92a2a'
             elif G.out_degree(n) == 0:
-                colores[n] = '#b2f2bb'      # verde suave: rama abierta
+                colores[n] = '#b2f2bb'      # verde: rama abierta
+                bordes[n] = '#2b8a3e'
             else:
-                colores[n] = '#fff3bf'      # amarillo suave: nodo interno
+                colores[n] = '#fff3bf'      # amarillo: nodo interno
+                bordes[n] = '#212529'
 
-        # Solo las flechas: el nodo es el propio bloque de texto del camino
+        # Solo las flechas: el nodo es el propio bloque de texto
         nx.draw_networkx_edges(G, pos, arrowstyle='-|>', arrowsize=16, width=1.6,
                                edge_color='#495057', ax=ax, node_size=0)
 
@@ -172,10 +131,11 @@ class RenderGrafo:
                 x, y, labels[n], fontsize=font_size, fontweight='bold',
                 ha='center', va='center', zorder=3,
                 bbox=dict(boxstyle='round,pad=0.45', facecolor=colores[n],
-                          edgecolor='#212529', linewidth=1.2),
+                          edgecolor=bordes[n], linewidth=1.5),
             )
 
-        ax.set_title('Árbol Semántico (Tableaux) — ramas α/β', fontsize=13, fontweight='bold')
+        ax.set_title('Árbol Semántico (Tableaux) — α: un solo camino · β: se bifurca',
+                     fontsize=12, fontweight='bold')
         ax.set_axis_off()
         ax.margins(x=0.12, y=0.12)
 

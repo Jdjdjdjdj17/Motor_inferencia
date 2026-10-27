@@ -11,7 +11,7 @@ Este programa permite:
 - Reconocer conectivos lógicos: `y`, `o`, `no`, `si... entonces`, `si y solo si`.
 - Convertir el texto a fórmulas bien formadas con su respectiva precedencia y paréntesis.
 - Generar el **árbol semántico por reglas α/β**.
-- Mostrar las **reglas iniciales en el nodo raíz** y, en cada nodo, el **camino acumulado** que construyen las reglas (lo nuevo marcado con `+`).
+- Mostrar las **reglas iniciales en el nodo raíz** y, en cada nodo, **solo lo que agrega su regla** (α o β), sin repetir las fórmulas anteriores.
 - Marcar ramas cerradas con `✕` y ramas abiertas con `✓`, numerando cada rama (`RAMA 1`, `RAMA 2`, ...).
 - Listar **todas las ramas** (abiertas y cerradas) con sus fórmulas acumuladas.
 - Mostrar las **ramas abiertas** con sus respectivas asignaciones de valores (`p = V`, `q = F`, ...).
@@ -118,10 +118,9 @@ python run_tableaux.py
    - **Modelos**: solo las ramas abiertas con su asignación.
 4. **Ver el grafo** - En el panel derecho aparece el árbol semántico jerárquico.
    - El **nodo raíz** muestra las **reglas iniciales** completas.
-   - Cada nodo muestra el **camino acumulado**; lo que añade cada regla aparece marcado con **`+`**.
-   - Cada hoja indica **`RAMA N`**, si está **abierta/cerrada** y su cierre o modelo.
-   - **Verde** = Rama abierta (`✓ ABIERTA`)
-   - **Rojo** = Rama cerrada (`✕ CERRADA`)
+   - Cada nodo muestra **solo lo que agrega su regla**, precedido de **`α`** o **`β`**, sin acumular las fórmulas anteriores.
+   - **`α`** = un solo camino (no bifurca) · **`β`** = se bifurca en dos ramas.
+   - **Verde con `✓`** = rama abierta · **Rojo con `✕`** = rama cerrada (sin las palabras "abierta/cerrada").
 5. **Guardar imagen** - Con `Guardar Imagen` puedes exportar el grafo a `.png`, `.jpg` o `.pdf`.
 
 ## Ejemplo de prueba
