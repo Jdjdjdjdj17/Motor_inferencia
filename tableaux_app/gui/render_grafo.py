@@ -43,7 +43,7 @@ def etiqueta_nodo(node, parent=None, numero_rama=None):
     """Texto de un nodo, solo con lo que agrega ese paso (sin acumular).
 
     - Raíz: las reglas iniciales completas.
-    - Cada hijo: el tipo de regla que lo generó (α o β) y las fórmulas nuevas.
+    - Cada hijo: solo las fórmulas nuevas que agrega su expansión.
     - Hoja: su número de rama y un ✓ si está abierta o una ✕ si está cerrada.
       El color del bloque (verde/rojo) refuerza el estado sin escribir palabras.
     """
@@ -55,10 +55,7 @@ def etiqueta_nodo(node, parent=None, numero_rama=None):
         lineas.extend(formula_a_string(f) for f in node.formulas)
     else:
         nuevas = node.formulas[len(parent.formulas):]
-        if nuevas:
-            tipo = node.rule or 'α'
-            textos = ', '.join(formula_a_string(f) for f in nuevas)
-            lineas.append(f'{tipo}: {textos}')
+        lineas.extend(formula_a_string(f) for f in nuevas)
 
     if es_hoja and numero_rama is not None and parent is not None:
         lineas.insert(0, f'RAMA {numero_rama}')
@@ -134,8 +131,7 @@ class RenderGrafo:
                           edgecolor=bordes[n], linewidth=1.5),
             )
 
-        ax.set_title('Árbol Semántico (Tableaux) — α: un solo camino · β: se bifurca',
-                     fontsize=12, fontweight='bold')
+        ax.set_title('Árbol Semántico (Tableaux)', fontsize=13, fontweight='bold')
         ax.set_axis_off()
         ax.margins(x=0.12, y=0.12)
 
