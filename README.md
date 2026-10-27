@@ -25,7 +25,7 @@ SE/
 │   ├── core/        # Núcleo del motor (parser, fórmulas, átomos, tableaux)
 │   ├── gui/         # Interfaz gráfica y renderizado del grafo
 │   ├── tests/       # Pruebas
-│   └── utils/       # Utilidades (normalización)
+│   └── utils/       # Utilidades (normalización y persistencia de reglas)
 ├── run_tableaux.py  # Punto de entrada para lanzar la app
 ├── requirements.txt
 ├── .gitignore
@@ -43,7 +43,10 @@ SE/
 | `core/formulas.py` | Definición del AST (`Atom`, `Not`, `And`, `Or`, `Imp`, `Iff`) y conversión a string con paréntesis. |
 | `core/tableau.py` | Motor de *tableaux*: aplica reglas **α** y **β**, marca fórmulas aplicadas, cierra ramas con átomo y negación (`✕`) y extrae modelos. |
 | `gui/app.py` | Interfaz gráfica con Tkinter (fórmulas, tabla de átomos, modelos y grafo). |
+| `gui/explicar.py` | Traduce fórmulas y ramas a lenguaje natural usando el nombre de los átomos; la explicación no muestra α/β. |
 | `gui/render_grafo.py` | Renderizado jerárquico del árbol como grafo con NetworkX + Matplotlib. |
+| `gui/gestor_reglas.py` | Ventana **Administrar reglas**: guarda, carga, renombra, duplica y elimina conjuntos de reglas con nombre. |
+| `utils/sesion.py` | Persistencia de la última sesión y de los conjuntos con nombre; también exporta/importa en `.json` o `.txt`. |
 
 ## Requisitos
 
@@ -113,14 +116,24 @@ python run_tableaux.py
 1. **Pegar reglas** - Escribe las reglas en lenguaje natural en el recuadro superior. Puedes poner varias, una por línea o separadas por punto.
 2. **Generar Árbol** - Pulsa `Generar Árbol`.
 3. **Revisar resultados** - El panel izquierdo tiene tres pestañas:
-   - **Reglas y átomos**: fórmulas (`R1: ...`) y tabla de átomos (`p = ...`).
-   - **Ramas**: **todas** las ramas (abiertas y cerradas), con su camino, sus fórmulas acumuladas, el par de cierre o el modelo.
-   - **Modelos**: solo las ramas abiertas con su asignación.
+   - **Reglas y átomos**: fórmulas (`R1: ...`) con su lectura en palabras, tabla de átomos (`p = ...`) y el **camino correcto** (cada rama posible, paso a paso, con su modelo).
+   - **Ramas**: **todas** las ramas (posibles y descartadas), explicadas paso a paso con los átomos, con sus fórmulas acumuladas y el modelo o la contradicción.
+   - **Modelos**: solo las ramas posibles, con la asignación en palabras y en letras.
 4. **Ver el grafo** - En el panel derecho aparece el árbol semántico jerárquico.
    - El **nodo raíz** muestra las **reglas iniciales** completas.
    - Cada nodo muestra **solo lo que agrega su regla**, sin acumular las fórmulas anteriores.
-   - **Verde con `✓`** = rama abierta · **Rojo con `✕`** = rama cerrada (sin las palabras "abierta/cerrada").
+   - **Verde con `✓`** = rama posible · **Rojo con `✕`** = rama descartada (sin las palabras "abierta/cerrada").
 5. **Guardar imagen** - Con `Guardar Imagen` puedes exportar el grafo a `.png`, `.jpg` o `.pdf`.
+6. **Administrar reglas** - Con `Administrar reglas` puedes guardar el conjunto actual con un nombre y **cargar, renombrar, duplicar o eliminar** los conjuntos guardados.
+
+### Guardado de reglas
+
+- Al cerrar la aplicación, las reglas se guardan automáticamente en `~/.tableaux_semantico/ultima_sesion.json`.
+- Al abrirla de nuevo, se cargan esas reglas y el árbol se regenera automáticamente si son válidas.
+- El botón **`Administrar reglas`** abre una ventana con todos los conjuntos guardados, su fecha y su cantidad de reglas.
+- Cada conjunto se guarda como un `.json` independiente en `~/.tableaux_semantico/reglas/`.
+- Los botones **`Guardar reglas`** y **`Abrir reglas`** siguen disponibles para exportar e importar archivos `.json` o `.txt`.
+- Si las reglas guardadas tienen un error de sintaxis, el texto se conserva para que puedas corregirlo.
 
 ## Ejemplo de prueba
 
@@ -136,9 +149,9 @@ Es de día.
 
 - **Fórmulas:** `p → q`, `r → ¬q`, `p`
 - **Átomos:** `p = es de día`, `q = voy a trabajar`, `r = llueve`
-- **Ramas abiertas:** 1
-- **Modelo:** `p=V, q=V, r=F`
-- **Árbol:** 2 ramas cerradas y 1 rama abierta
+- **Ramas posibles:** 1
+- **Modelo:** `p=V, q=V, r=F` (`sí es de día`, `sí voy a trabajar`, `no llueve`)
+- **Árbol:** 2 ramas descartadas y 1 rama posible
 
 ## ¿Cómo funciona el motor?
 
