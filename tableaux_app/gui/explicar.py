@@ -132,7 +132,19 @@ def pasos_de_rama(rama, tabla, dicc) -> List[str]:
                 texto += " (ya estaba en la rama; no agrega nada nuevo)"
             pasos.append(texto + ".")
         else:
-            texto = f"De «{origen}» se deduce {_lista_formulas(nuevas, dicc)}"
+            if nodo.rule == "propagacion":
+                # Modo compacto: en un solo paso se aplican varias reglas ya decididas
+                orig = [formula_en_palabras(g, dicc) for g in nodo.origenes[:4]]
+                resto = len(nodo.origenes) - len(orig)
+                lista = ", ".join(_con_comillas(o) for o in orig)
+                if resto > 0:
+                    lista += f" y {resto} más"
+                texto = (
+                    f"Se aplican las reglas ya decididas ({lista}) "
+                    f"y se deduce {_lista_formulas(nuevas, dicc)}"
+                )
+            else:
+                texto = f"De «{origen}» se deduce {_lista_formulas(nuevas, dicc)}"
             if nuevas and all(_ya_estaba(f, padre, tabla) for f in nuevas):
                 texto += " (ya estaba en la rama; no agrega nada nuevo)"
             pasos.append(texto + ".")

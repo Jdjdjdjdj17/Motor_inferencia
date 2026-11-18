@@ -7,11 +7,13 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from tableaux_app.core.parser import texto_a_formulas
-from tableaux_app.core.errores import ErrorSintaxis
+from tableaux_app.core.errores import ErrorSintaxis, ArbolDemasiadoGrande
+from tableaux_app.core.atomos import DiccionarioAtomos
 from tableaux_app.core.tableau import Tableau
 from tableaux_app.core.formulas import formula_a_string
 from tableaux_app.gui.gestor_reglas import GestorReglas
 from tableaux_app.gui.render_grafo import RenderGrafo
+from tableaux_app.gui.ventanas import ControlVentanasMixin
 from tableaux_app.gui.explicar import (
     formula_y_lectura, modelo_dict_en_palabras, modelo_en_palabras,
     pasos_de_rama, resultado_de_rama, tabla_de_atomos,
@@ -21,6 +23,11 @@ from tableaux_app.utils.sesion import (
     cargar_ultima_sesion, cargar_ultima_sesion_nombre, guardar_ultima_sesion,
     cargar_archivo_reglas, guardar_archivo_reglas,
 )
+
+
+# Con textos grandes las pestañas solo escriben un resumen (el cálculo sí usa todo).
+LIMITE_RAMAS_TEXTO = 100
+LIMITE_OMITIDAS_TEXTO = 100
 
 
 def _cantidad(n, singular, plural):
@@ -34,7 +41,7 @@ TEXTO_EJEMPLO = (
 )
 
 
-class App:
+class App(ControlVentanasMixin):
     def __init__(self, root):
         self.root = root
         self.root.title("Tableaux - Árbol Semántico")
@@ -46,12 +53,13 @@ class App:
         
         ttk.Label(top_frame, text="Reglas en lenguaje natural:").pack(anchor=tk.W)
         
-        self.text_input = scrolledtext.ScrolledText(top_frame, height=8, wrap=tk.WORD)
+        self.text_input = scrolledtext.ScrolledText(top_frame, height=8, wrap=tk.WORD, undo=True)
         self.text_input.pack(fill=tk.X)
         texto_guardado = cargar_ultima_sesion()
         if texto_guardado is None:
             texto_guardado = TEXTO_EJEMPLO
         self.text_input.insert(tk.END, texto_guardado)
+        self.text_input.edit_reset()  # el texto inicial no entra en el historial de Ctrl+Z
 
         btn_frame = ttk.Frame(top_frame)
         btn_frame.pack(fill=tk.X, pady=2)
@@ -61,6 +69,8 @@ class App:
         ttk.Button(btn_frame, text="Guardar reglas", command=self.guardar_reglas).pack(side=tk.LEFT)
         ttk.Button(btn_frame, text="Abrir reglas", command=self.abrir_reglas).pack(side=tk.LEFT)
         ttk.Button(btn_frame, text="Administrar reglas", command=self.administrar_reglas).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Ver reglas", command=self.ver_reglas).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Ver átomos", command=self.ver_atomos).pack(side=tk.LEFT)
         
         # Paned window
         paned = ttk.PanedWindow(root, orient=tk.HORIZONTAL)
@@ -105,13 +115,28 @@ class App:
         right_frame = ttk.Frame(paned)
         paned.add(right_frame, weight=2)
         
-        ttk.Label(right_frame, text="Árbol Semántico (Grafo)").pack(anchor=tk.W)
+        encabezado = ttk.Frame(right_frame)
+        encabezado.pack(fill=tk.X)
+        ttk.Label(encabezado, text="Árbol Semántico (Grafo)").pack(side=tk.LEFT)
+        ttk.Button(encabezado, text="Ajustar", width=8, command=self.zoom_ajustar).pack(side=tk.RIGHT)
+        ttk.Button(encabezado, text="Zoom −", width=8, command=lambda: self.zoom(1 / 1.25)).pack(side=tk.RIGHT)
+        ttk.Button(encabezado, text="Zoom +", width=8, command=lambda: self.zoom(1.25)).pack(side=tk.RIGHT)
+        ttk.Label(encabezado, text="Rueda: zoom · Arrastrar: mover   ").pack(side=tk.RIGHT)
         self.fig = Figure(figsize=(8,6), dpi=100)
         self.ax = self.fig.add_subplot(111)
         self.canvas = FigureCanvasTkAgg(self.fig, master=right_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         
         self.dicc = None
+        self.omitidas = []
+        self._vista_inicial = None
+        self._fuentes_base = []
+        self._arrastre = None
+        self._iniciar_ventanas()
+        self.canvas.mpl_connect('scroll_event', self._on_rueda)
+        self.canvas.mpl_connect('button_press_event', self._on_presionar)
+        self.canvas.mpl_connect('motion_notify_event', self._on_mover)
+        self.canvas.mpl_connect('button_release_event', self._on_soltar)
         self.tableau = None
         self.nombre_reglas_actual = cargar_ultima_sesion_nombre()
         self._gestor_reglas = None
@@ -183,7 +208,7 @@ class App:
     def num_reglas_actual(self) -> int:
         texto = self.texto_reglas()
         try:
-            formulas, _ = texto_a_formulas(texto)
+            formulas, _ = texto_a_formulas(texto, omitidas=[])
             return len(formulas)
         except ErrorSintaxis:
             return len([linea for linea in texto.splitlines() if linea.strip()])
@@ -197,6 +222,11 @@ class App:
         self.generar()
 
     def limpiar(self):
+        self.formulas, self.fuentes = [], []
+        self.dicc = None
+        self.omitidas = []
+        self._texto_analizado = None
+        self._refrescar_ventanas()
         self.text_input.delete('1.0', tk.END)
         self.text_info.delete('1.0', tk.END)
         self.text_ramas.delete('1.0', tk.END)
@@ -208,14 +238,56 @@ class App:
         self.nombre_reglas_actual = ""
         self.guardar_sesion()
 
-    def generar(self, silencioso=False):
+    def _limpiar_resultados(self):
+        """Borra lo calculado antes para que no quede a la vista un resultado viejo."""
+        self.tableau = None
+        for caja in (self.text_ramas, self.text_explicacion, self.text_modelos):
+            caja.delete('1.0', tk.END)
+        self.ax.clear()
+        self._vista_inicial = None
+        self._fuentes_base = []
+        self.canvas.draw()
+
+    def _limitar_ramas(self, ramas, caja):
+        """Con muchas ramas solo se escriben LIMITE_RAMAS_TEXTO (las posibles primero)."""
+        if len(ramas) <= LIMITE_RAMAS_TEXTO:
+            return ramas
+        caja.insert(
+            tk.END,
+            f"(Hay {len(ramas)} ramas; se muestran solo {LIMITE_RAMAS_TEXTO}, las posibles primero.)\n"
+        )
+        return sorted(ramas, key=lambda r: r['estado'] != 'abierta')[:LIMITE_RAMAS_TEXTO]
+
+    def generar(self, silencioso=False, conservar_letras=False):
         try:
             texto = self.texto_reglas()
             self.guardar_sesion()
-            formulas, dicc = texto_a_formulas(texto)
+            # Modo tolerante: las frases que no se entienden se omiten y se listan aparte
+            self.omitidas = []
+            self.fuentes = []
+            dicc_inicial = None
+            if conservar_letras and self.dicc is not None:
+                # Tras eliminar reglas, los átomos que siguen en uso conservan su letra
+                dicc_inicial = DiccionarioAtomos(
+                    reservadas=self.dicc.key_a_id, siguiente=self.dicc.siguiente
+                )
+            formulas, dicc = texto_a_formulas(
+                texto, dicc=dicc_inicial, omitidas=self.omitidas, fuentes=self.fuentes
+            )
+            self._texto_analizado = texto
+            self.formulas = formulas
+            self.dicc = dicc
+            self._refrescar_ventanas()
             if not formulas:
+                self._limpiar_resultados()
+                self.mostrar_info(formulas, dicc)
                 if not silencioso:
-                    messagebox.showwarning("Aviso", "Escribe al menos una regla.")
+                    detalle = ""
+                    if self.omitidas:
+                        detalle = "\n\nNo pude usar estas frases:\n" + "\n".join(
+                            f"• {f[:60]}: {m}" for _, f, m in self.omitidas[:5]
+                        )
+                    messagebox.showwarning("Aviso", "No encontré ninguna regla en el texto." + detalle)
                 return
             self.dicc = dicc
             # Crear tableau
@@ -226,6 +298,12 @@ class App:
             self.mostrar_explicacion()
             self.mostrar_modelos()
             self.dibujar_grafo()
+        except ArbolDemasiadoGrande as e:
+            self._limpiar_resultados()
+            self.mostrar_info(formulas, dicc)
+            self.cuaderno.select(0)
+            if not silencioso:
+                messagebox.showwarning("Árbol demasiado grande", str(e))
         except ErrorSintaxis as e:
             if not silencioso:
                 messagebox.showwarning("No pude entender las reglas", str(e))
@@ -250,10 +328,21 @@ class App:
         else:
             self.text_info.insert(tk.END, "(sin átomos)\n")
 
+        omitidas = getattr(self, 'omitidas', [])
+        if omitidas:
+            self.text_info.insert(tk.END, f"\n=== FRASES QUE NO USÉ ({len(omitidas)}) ===\n")
+            for n, frase, motivo in omitidas[:LIMITE_OMITIDAS_TEXTO]:
+                resumen = frase if len(frase) <= 90 else frase[:89] + '…'
+                self.text_info.insert(tk.END, f"#{n} «{resumen}»\n      {motivo}\n")
+            if len(omitidas) > LIMITE_OMITIDAS_TEXTO:
+                self.text_info.insert(
+                    tk.END, f"… y {len(omitidas) - LIMITE_OMITIDAS_TEXTO} más.\n"
+                )
+
         # Caminos posibles: las ramas que no se contradicen
         self.text_info.insert(tk.END, "\n=== CAMINO CORRECTO ===\n")
         if not self.tableau:
-            self.text_info.insert(tk.END, "(genera el árbol para verlo)\n")
+            self.text_info.insert(tk.END, "(no hay árbol: genera uno o reduce las reglas)\n")
             return
         abiertas = [r for r in self.tableau.obtener_ramas() if r['estado'] == 'abierta']
         if not abiertas:
@@ -266,7 +355,12 @@ class App:
                 "\nEl paso a paso en palabras está en la pestaña «Explicación».\n"
             )
             return
-        for r in abiertas:
+        if len(abiertas) > LIMITE_RAMAS_TEXTO:
+            self.text_info.insert(
+                tk.END,
+                f"Hay {len(abiertas)} caminos posibles; se muestran los primeros {LIMITE_RAMAS_TEXTO}.\n"
+            )
+        for r in abiertas[:LIMITE_RAMAS_TEXTO]:
             self.text_info.insert(tk.END, f"✓ Rama {r['numero']}\n")
             self.text_info.insert(
                 tk.END,
@@ -299,6 +393,7 @@ class App:
             f"{_cantidad(descartadas, 'descartada', 'descartadas')}\n"
         )
         self.text_ramas.insert(tk.END, "=" * 46 + "\n")
+        ramas = self._limitar_ramas(ramas, self.text_ramas)
 
         for r in ramas:
             es_posible = r['estado'] == 'abierta'
@@ -363,6 +458,7 @@ class App:
             tk.END, "Átomos: " + tabla_de_atomos(self.dicc) + "\n"
         )
         self.text_explicacion.insert(tk.END, "=" * 46 + "\n")
+        ramas = self._limitar_ramas(ramas, self.text_explicacion)
 
         for r in ramas:
             es_posible = r['estado'] == 'abierta'
@@ -400,8 +496,22 @@ class App:
         if not self.tableau or not self.dicc:
             return
         hojas = self.tableau.obtener_hojas_abiertas()
-        modelos = self.tableau.extraer_modelos(self.dicc)
-        self.text_modelos.insert(tk.END, f"Ramas posibles: {len(hojas)}\n\n")
+        modelos = self.tableau.extraer_modelos(self.dicc, max_modelos=LIMITE_RAMAS_TEXTO)
+        modo = getattr(self.tableau, 'modo', None)
+        self.text_modelos.insert(
+            tk.END, f"Ramas posibles: {len(hojas)}" + (f" (modo {modo})" if modo else "") + "\n"
+        )
+        if modo == 'compacto':
+            self.text_modelos.insert(
+                tk.END,
+                "Modo compacto (muchas reglas): las reglas ya decididas se resuelven juntas, "
+                "sin dibujar cada rama descartada. El resultado es el mismo.\n"
+            )
+        if len(hojas) > LIMITE_RAMAS_TEXTO:
+            self.text_modelos.insert(
+                tk.END, f"Se muestran los primeros {LIMITE_RAMAS_TEXTO} modelos.\n"
+            )
+        self.text_modelos.insert(tk.END, "\n")
         if len(hojas) == 0:
             self.text_modelos.insert(tk.END, "LAS REGLAS SE CONTRADICEN\n")
             self.text_modelos.insert(tk.END, "(No hay ningún modelo posible)\n")
@@ -415,13 +525,80 @@ class App:
                 tk.END, "  Valores: " + valores_de_modelo(m) + "\n\n"
             )
     
+    # ---------- zoom y desplazamiento del árbol ----------
+    ZOOM_MIN = 0.25
+    ZOOM_MAX = 12.0
+
+    def _nivel_zoom(self):
+        if not self._vista_inicial:
+            return 1.0
+        (x0, x1), _ = self._vista_inicial
+        xa, xb = self.ax.get_xlim()
+        return (x1 - x0) / (xb - xa) if xb != xa else 1.0
+
+    def _actualizar_fuentes(self):
+        """El texto de los bloques crece o se encoge junto con el zoom."""
+        z = self._nivel_zoom()
+        for t, base in self._fuentes_base:
+            t.set_fontsize(max(2.0, base * z))
+
+    def zoom(self, factor, centro=None):
+        """factor > 1 acerca, factor < 1 aleja. `centro` = (x, y) en datos (por defecto, el centro)."""
+        if not self.tableau or not self._vista_inicial:
+            return
+        if not (self.ZOOM_MIN <= self._nivel_zoom() * factor <= self.ZOOM_MAX):
+            return
+        xmin, xmax = self.ax.get_xlim()
+        ymin, ymax = self.ax.get_ylim()
+        cx, cy = centro if centro else ((xmin + xmax) / 2, (ymin + ymax) / 2)
+        self.ax.set_xlim(cx - (cx - xmin) / factor, cx + (xmax - cx) / factor)
+        self.ax.set_ylim(cy - (cy - ymin) / factor, cy + (ymax - cy) / factor)
+        self._actualizar_fuentes()
+        self.canvas.draw_idle()
+
+    def zoom_ajustar(self):
+        """Vuelve a mostrar el árbol completo."""
+        if not self._vista_inicial:
+            return
+        self.ax.set_xlim(*self._vista_inicial[0])
+        self.ax.set_ylim(*self._vista_inicial[1])
+        self._actualizar_fuentes()
+        self.canvas.draw_idle()
+
+    def _on_rueda(self, event):
+        if event.inaxes is not self.ax or event.xdata is None:
+            return
+        self.zoom(1.2 if event.button == 'up' else 1 / 1.2, centro=(event.xdata, event.ydata))
+
+    def _on_presionar(self, event):
+        if event.inaxes is self.ax and event.button == 1 and self._vista_inicial:
+            self._arrastre = (event.x, event.y, self.ax.get_xlim(), self.ax.get_ylim())
+
+    def _on_mover(self, event):
+        if not self._arrastre or event.x is None:
+            return
+        x0, y0, (xa, xb), (ya, yb) = self._arrastre
+        dx = (event.x - x0) / self.ax.bbox.width * (xb - xa)
+        dy = (event.y - y0) / self.ax.bbox.height * (yb - ya)
+        self.ax.set_xlim(xa - dx, xb - dx)
+        self.ax.set_ylim(ya - dy, yb - dy)
+        self.canvas.draw_idle()
+
+    def _on_soltar(self, event):
+        self._arrastre = None
+
     def dibujar_grafo(self):
+        self._vista_inicial = None
+        self._fuentes_base = []
         self.ax.clear()
         if not self.tableau:
             self.canvas.draw()
             return
         render = RenderGrafo(self.tableau)
-        render.dibujar_en(self.ax)
+        dibujado = render.dibujar_en(self.ax)
+        if dibujado:
+            self._vista_inicial = (self.ax.get_xlim(), self.ax.get_ylim())
+            self._fuentes_base = [(t, t.get_fontsize()) for t in self.ax.texts]
         self.canvas.draw()
     
     def guardar(self):

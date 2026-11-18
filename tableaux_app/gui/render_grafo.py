@@ -68,6 +68,23 @@ def etiqueta_nodo(node, parent=None, numero_rama=None):
     return '\n'.join(lineas)
 
 
+# Por encima de este número de nodos el árbol ya no se dibuja (no se podría leer).
+# Los resultados siguen en las pestañas Reglas, Ramas, Explicación y Modelos.
+LIMITE_DIBUJO = 250
+
+
+def _aviso_arbol_grande(ax, nodos):
+    ax.clear()
+    ax.text(
+        0.5, 0.5,
+        f"El árbol tiene {nodos} nodos: es demasiado grande para dibujarlo.\n\n"
+        "Los resultados completos están en las pestañas\n"
+        "Reglas y átomos, Ramas, Explicación y Modelos.",
+        ha='center', va='center', fontsize=12, transform=ax.transAxes,
+    )
+    ax.set_axis_off()
+
+
 class RenderGrafo:
     def __init__(self, tableau: Tableau):
         self.tableau = tableau
@@ -91,7 +108,11 @@ class RenderGrafo:
         return self.G
 
     def dibujar_en(self, ax, font_size=None):
-        """Dibuja el árbol en un eje de matplotlib (lo usan la GUI y guardar())."""
+        """Dibuja el árbol en un eje de matplotlib (lo usan la GUI y guardar()).
+        Devuelve True si dibujó el árbol (False si era demasiado grande o estaba vacío)."""
+        if len(self.tableau.nodes) > LIMITE_DIBUJO:
+            _aviso_arbol_grande(ax, len(self.tableau.nodes))
+            return False
         G = self.construir_grafo()
         ax.clear()
         if len(G.nodes()) == 0:
@@ -134,6 +155,7 @@ class RenderGrafo:
         ax.set_title('Árbol Semántico (Tableaux)', fontsize=13, fontweight='bold')
         ax.set_axis_off()
         ax.margins(x=0.12, y=0.12)
+        return True
 
     def dibujar(self, figsize=(14, 10)):
         self.fig = plt.figure(figsize=figsize)
@@ -143,6 +165,12 @@ class RenderGrafo:
         plt.show()
 
     def guardar(self, filename: str, figsize=None):
+        if len(self.tableau.nodes) > LIMITE_DIBUJO:
+            fig = plt.figure(figsize=(8, 4))
+            _aviso_arbol_grande(fig.add_subplot(111), len(self.tableau.nodes))
+            fig.savefig(filename, dpi=120, bbox_inches='tight')
+            plt.close(fig)
+            return filename
         G = self.construir_grafo()
         if len(G.nodes()) == 0:
             return filename

@@ -40,6 +40,27 @@ def _expandir_ni(tokens: List[Token]) -> List[Token]:
     return out
 
 
+_NEGADORES_EN_MEDIO = ('no', 'nunca', 'jamás')
+
+
+def _negacion_en_medio(tokens: List[Token]) -> List[Token]:
+    """'El guardian no miente' / 'la puerta nunca se abre'  →  ¬(el guardian miente).
+    Un 'no' entre palabras de una misma frase niega toda la frase: se mueve al principio."""
+    out: List[Token] = []
+    n = len(tokens)
+    for i, t in enumerate(tokens):
+        if (t.tipo == 'NOT' and t.texto_original in _NEGADORES_EN_MEDIO
+                and out and out[-1].tipo == 'ATOM_TEXT'
+                and i + 1 < n and tokens[i + 1].tipo == 'ATOM_TEXT'):
+            j = len(out)
+            while j > 0 and out[j - 1].tipo == 'ATOM_TEXT':
+                j -= 1
+            out.insert(j, Token('NOT', 'NOT', t.texto_original))
+            continue
+        out.append(t)
+    return out
+
+
 _FIN_DE_ORACION = ('.', ';', '\n')
 
 
@@ -176,7 +197,7 @@ def _conclusion_suelta(tokens: List[Token], i: int, res: List[Token]) -> int:
 
 
 def reescribir_si_entonces(tokens: List[Token]) -> List[Token]:
-    tokens = _quitar_conjuncion_inicial(_expandir_ni(tokens))
+    tokens = _quitar_conjuncion_inicial(_negacion_en_medio(_expandir_ni(tokens)))
     res: List[Token] = []
     i, n = 0, len(tokens)
     while i < n:
