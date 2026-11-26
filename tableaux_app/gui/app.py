@@ -14,6 +14,7 @@ from tableaux_app.core.formulas import formula_a_string
 from tableaux_app.gui.gestor_reglas import GestorReglas
 from tableaux_app.gui.render_grafo import RenderGrafo
 from tableaux_app.gui.ventanas import ControlVentanasMixin
+from tableaux_app.gui.vista_arbol import VistaArbol
 from tableaux_app.gui.explicar import (
     formula_y_lectura, modelo_dict_en_palabras, modelo_en_palabras,
     pasos_de_rama, resultado_de_rama, tabla_de_atomos,
@@ -121,7 +122,7 @@ class App(ControlVentanasMixin):
         ttk.Button(encabezado, text="Ajustar", width=8, command=self.zoom_ajustar).pack(side=tk.RIGHT)
         ttk.Button(encabezado, text="Zoom −", width=8, command=lambda: self.zoom(1 / 1.25)).pack(side=tk.RIGHT)
         ttk.Button(encabezado, text="Zoom +", width=8, command=lambda: self.zoom(1.25)).pack(side=tk.RIGHT)
-        ttk.Label(encabezado, text="Rueda: zoom · Arrastrar: mover   ").pack(side=tk.RIGHT)
+        ttk.Label(encabezado, text="Rueda: zoom · Arrastrar: mover · Ajustar: ver todo   ").pack(side=tk.RIGHT)
         self.fig = Figure(figsize=(8,6), dpi=100)
         self.ax = self.fig.add_subplot(111)
         self.canvas = FigureCanvasTkAgg(self.fig, master=right_frame)
@@ -129,14 +130,8 @@ class App(ControlVentanasMixin):
         
         self.dicc = None
         self.omitidas = []
-        self._vista_inicial = None
-        self._fuentes_base = []
-        self._arrastre = None
+        self.vista = VistaArbol(self.fig, self.ax, self.canvas)
         self._iniciar_ventanas()
-        self.canvas.mpl_connect('scroll_event', self._on_rueda)
-        self.canvas.mpl_connect('button_press_event', self._on_presionar)
-        self.canvas.mpl_connect('motion_notify_event', self._on_mover)
-        self.canvas.mpl_connect('button_release_event', self._on_soltar)
         self.tableau = None
         self.nombre_reglas_actual = cargar_ultima_sesion_nombre()
         self._gestor_reglas = None
@@ -244,8 +239,6 @@ class App(ControlVentanasMixin):
         for caja in (self.text_ramas, self.text_explicacion, self.text_modelos):
             caja.delete('1.0', tk.END)
         self.ax.clear()
-        self._vista_inicial = None
-        self._fuentes_base = []
         self.canvas.draw()
 
     def _limitar_ramas(self, ramas, caja):
@@ -525,81 +518,24 @@ class App(ControlVentanasMixin):
                 tk.END, "  Valores: " + valores_de_modelo(m) + "\n\n"
             )
     
-    # ---------- zoom y desplazamiento del árbol ----------
-    ZOOM_MIN = 0.25
-    ZOOM_MAX = 12.0
-
-    def _nivel_zoom(self):
-        if not self._vista_inicial:
-            return 1.0
-        (x0, x1), _ = self._vista_inicial
-        xa, xb = self.ax.get_xlim()
-        return (x1 - x0) / (xb - xa) if xb != xa else 1.0
-
-    def _actualizar_fuentes(self):
-        """El texto de los bloques crece o se encoge junto con el zoom."""
-        z = self._nivel_zoom()
-        for t, base in self._fuentes_base:
-            t.set_fontsize(max(2.0, base * z))
-
-    def zoom(self, factor, centro=None):
-        """factor > 1 acerca, factor < 1 aleja. `centro` = (x, y) en datos (por defecto, el centro)."""
-        if not self.tableau or not self._vista_inicial:
-            return
-        if not (self.ZOOM_MIN <= self._nivel_zoom() * factor <= self.ZOOM_MAX):
-            return
-        xmin, xmax = self.ax.get_xlim()
-        ymin, ymax = self.ax.get_ylim()
-        cx, cy = centro if centro else ((xmin + xmax) / 2, (ymin + ymax) / 2)
-        self.ax.set_xlim(cx - (cx - xmin) / factor, cx + (xmax - cx) / factor)
-        self.ax.set_ylim(cy - (cy - ymin) / factor, cy + (ymax - cy) / factor)
-        self._actualizar_fuentes()
-        self.canvas.draw_idle()
+    # ---------- vista del árbol (zoom, mover, ajustar): ver vista_arbol.py ----------
+    def zoom(self, factor):
+        self.vista.zoom(factor)
 
     def zoom_ajustar(self):
-        """Vuelve a mostrar el árbol completo."""
-        if not self._vista_inicial:
-            return
-        self.ax.set_xlim(*self._vista_inicial[0])
-        self.ax.set_ylim(*self._vista_inicial[1])
-        self._actualizar_fuentes()
-        self.canvas.draw_idle()
-
-    def _on_rueda(self, event):
-        if event.inaxes is not self.ax or event.xdata is None:
-            return
-        self.zoom(1.2 if event.button == 'up' else 1 / 1.2, centro=(event.xdata, event.ydata))
-
-    def _on_presionar(self, event):
-        if event.inaxes is self.ax and event.button == 1 and self._vista_inicial:
-            self._arrastre = (event.x, event.y, self.ax.get_xlim(), self.ax.get_ylim())
-
-    def _on_mover(self, event):
-        if not self._arrastre or event.x is None:
-            return
-        x0, y0, (xa, xb), (ya, yb) = self._arrastre
-        dx = (event.x - x0) / self.ax.bbox.width * (xb - xa)
-        dy = (event.y - y0) / self.ax.bbox.height * (yb - ya)
-        self.ax.set_xlim(xa - dx, xb - dx)
-        self.ax.set_ylim(ya - dy, yb - dy)
-        self.canvas.draw_idle()
-
-    def _on_soltar(self, event):
-        self._arrastre = None
+        """Muestra el árbol completo."""
+        self.vista.ajustar()
 
     def dibujar_grafo(self):
-        self._vista_inicial = None
-        self._fuentes_base = []
         self.ax.clear()
         if not self.tableau:
             self.canvas.draw()
             return
         render = RenderGrafo(self.tableau)
-        dibujado = render.dibujar_en(self.ax)
-        if dibujado:
-            self._vista_inicial = (self.ax.get_xlim(), self.ax.get_ylim())
-            self._fuentes_base = [(t, t.get_fontsize()) for t in self.ax.texts]
-        self.canvas.draw()
+        if render.dibujar_en(self.ax):
+            self.vista.mostrar(render)
+        else:
+            self.canvas.draw()
     
     def guardar(self):
         if not self.tableau:

@@ -1,42 +1,18 @@
 # -*- coding: utf-8 -*-
 import networkx as nx
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 from tableaux_app.core.tableau import Tableau
 from tableaux_app.core.formulas import formula_a_string
 
-
-def layout_arbol_jerarquico(G, root):
-    """
-    Layout de árbol clásico: cada hoja ocupa una columna y cada padre queda
-    centrado sobre sus hijos. Así las ramas se ven como caminos separados.
-    """
-    profundidad = {}
-    pos_x = {}
-    siguiente_columna = [0]
-
-    def recorrer(n, nivel):
-        profundidad[n] = nivel
-        hijos = list(G.successors(n))
-        if not hijos:
-            x = siguiente_columna[0]
-            siguiente_columna[0] += 1
-        else:
-            xs = [recorrer(h, nivel + 1) for h in hijos]
-            x = (min(xs) + max(xs)) / 2
-        pos_x[n] = x
-        return x
-
-    recorrer(root, 0)
-
-    max_x = max(pos_x.values()) if pos_x else 0
-    max_y = max(profundidad.values()) if profundidad else 0
-
-    pos = {}
-    for n in pos_x:
-        x = pos_x[n] / max_x if max_x else 0.5
-        y = -profundidad[n] / max_y if max_y else 0.0
-        pos[n] = (x, y)
-    return pos
+# El dibujo se calcula en "unidades" = píxeles con una letra de tamaño FUENTE_BASE.
+# Cada bloque ocupa el espacio que realmente necesita su texto y se deja un hueco entre bloques,
+# así que nunca se encima uno con otro, a ningún zoom (el zoom escala texto y espacio por igual).
+FUENTE_BASE = 10
+HUECO_X = 30   # espacio mínimo entre bloques vecinos (unidades)
+HUECO_Y = 60   # espacio entre niveles (unidades)
+MARGEN = 40
+MAX_PIXELES_IMAGEN = 6000  # tope del lado mayor al guardar una imagen
 
 
 def etiqueta_nodo(node, parent=None, numero_rama=None):
@@ -89,6 +65,11 @@ class RenderGrafo:
     def __init__(self, tableau: Tableau):
         self.tableau = tableau
         self.G = nx.DiGraph()
+        # Los llena dibujar_en(); los usa VistaArbol (zoom) y guardar()
+        self.limites = None   # (x0, x1, y0, y1) del dibujo, en unidades
+        self.textos = []      # los bloques de texto (artistas de matplotlib)
+        self.fuente_base = FUENTE_BASE
+        self.dpi_medida = None  # DPI de la figura cuando se midieron los bloques
 
     def construir_grafo(self):
         self.G.clear()
@@ -107,23 +88,99 @@ class RenderGrafo:
         dfs(self.tableau.root)
         return self.G
 
-    def dibujar_en(self, ax, font_size=None):
+    # ---------- medida y posición de los bloques ----------
+    def _medir(self, ax, etiquetas):
+        """Ancho y alto real (en unidades) de cada bloque, con su relleno."""
+        fig = ax.figure
+        renderer = fig.canvas.get_renderer()
+        relleno = 0.45 * FUENTE_BASE * fig.dpi / 72.0
+        tam = {}
+        for n, texto in etiquetas.items():
+            t = ax.text(0, 0, texto, fontsize=FUENTE_BASE, fontweight='bold')
+            caja = t.get_window_extent(renderer)
+            t.remove()
+            tam[n] = (caja.width + 2 * relleno, caja.height + 2 * relleno)
+        return tam
+
+    def _colocar(self, G, tam):
+        """Posición (x, y) de cada bloque. A cada nodo se le reserva un tramo horizontal tan ancho
+        como lo que necesitan sus hijos (o él mismo, si es más ancho): los tramos de nodos
+        distintos nunca se cruzan, así que los bloques no se encimen."""
+        raiz = self.tableau.root.id
+        hijos = {n: list(G.successors(n)) for n in G.nodes()}
+
+        ancho_tramo = {}
+
+        def calcular(n):
+            suma = 0.0
+            for h in hijos[n]:
+                suma += calcular(h)
+            ancho_tramo[n] = max(tam[n][0] + HUECO_X, suma)
+            return ancho_tramo[n]
+
+        xs = {}
+
+        def colocar(n, izq):
+            total = ancho_tramo[n]
+            hs = hijos[n]
+            if not hs:
+                xs[n] = izq + total / 2
+                return
+            suma = sum(ancho_tramo[h] for h in hs)
+            cursor = izq + (total - suma) / 2
+            centros = []
+            for h in hs:
+                colocar(h, cursor)
+                centros.append(xs[h])
+                cursor += ancho_tramo[h]
+            medio = (min(centros) + max(centros)) / 2
+            # centrado sobre sus hijos, sin salirse de su propio tramo
+            minimo = izq + tam[n][0] / 2
+            maximo = izq + total - tam[n][0] / 2
+            xs[n] = min(max(medio, minimo), maximo)
+
+        calcular(raiz)
+        colocar(raiz, 0.0)
+
+        # Niveles: cada uno tan alto como su bloque más alto
+        profundidad = {raiz: 0}
+        orden = [raiz]
+        for n in orden:
+            for h in hijos[n]:
+                profundidad[h] = profundidad[n] + 1
+                orden.append(h)
+        alto_nivel = {}
+        for n, d in profundidad.items():
+            alto_nivel[d] = max(alto_nivel.get(d, 0.0), tam[n][1])
+        y_nivel = {}
+        acumulado = 0.0
+        for d in range(len(alto_nivel)):
+            y_nivel[d] = -(acumulado + alto_nivel[d] / 2)
+            acumulado += alto_nivel[d] + HUECO_Y
+
+        pos = {n: (xs[n], y_nivel[profundidad[n]]) for n in xs}
+        x0 = min(xs[n] - tam[n][0] / 2 for n in xs) - MARGEN
+        x1 = max(xs[n] + tam[n][0] / 2 for n in xs) + MARGEN
+        y1 = alto_nivel[0] / 2 + MARGEN
+        y0 = min(pos[n][1] - tam[n][1] / 2 for n in pos) - MARGEN
+        return pos, (x0, x1, y0, y1)
+
+    def dibujar_en(self, ax):
         """Dibuja el árbol en un eje de matplotlib (lo usan la GUI y guardar()).
-        Devuelve True si dibujó el árbol (False si era demasiado grande o estaba vacío)."""
+        Devuelve True si dibujó el árbol (False si era demasiado grande o estaba vacío).
+        Deja en self.limites / self.textos / self.fuente_base lo que necesita VistaArbol."""
         if len(self.tableau.nodes) > LIMITE_DIBUJO:
             _aviso_arbol_grande(ax, len(self.tableau.nodes))
             return False
         G = self.construir_grafo()
         ax.clear()
         if len(G.nodes()) == 0:
-            return
+            return False
 
-        pos = layout_arbol_jerarquico(G, self.tableau.root.id)
-        niveles = len({round(y, 6) for _, y in pos.values()})
-        hojas = max(1, sum(1 for n in G.nodes() if G.out_degree(n) == 0))
-
-        if font_size is None:
-            font_size = max(7, min(11, 90 // max(hojas, niveles // 2 + 1)))
+        etiquetas = nx.get_node_attributes(G, 'label')
+        tam = self._medir(ax, etiquetas)
+        self.dpi_medida = ax.figure.dpi
+        pos, self.limites = self._colocar(G, tam)
 
         # Color y borde del bloque según el estado del nodo
         colores = {}
@@ -139,29 +196,44 @@ class RenderGrafo:
                 colores[n] = '#fff3bf'      # amarillo: nodo interno
                 bordes[n] = '#212529'
 
-        # Solo las flechas: el nodo es el propio bloque de texto
-        nx.draw_networkx_edges(G, pos, arrowstyle='-|>', arrowsize=16, width=1.6,
-                               edge_color='#495057', ax=ax, node_size=0)
+        # Líneas entre padre e hijo (quedan debajo de los bloques)
+        segmentos = [(pos[a], pos[b]) for a, b in G.edges()]
+        ax.add_collection(LineCollection(segmentos, colors='#495057', linewidths=1.6, zorder=1))
 
-        labels = nx.get_node_attributes(G, 'label')
+        self.textos = []
         for n, (x, y) in pos.items():
-            ax.text(
-                x, y, labels[n], fontsize=font_size, fontweight='bold',
-                ha='center', va='center', zorder=3,
+            t = ax.text(
+                x, y, etiquetas[n], fontsize=FUENTE_BASE, fontweight='bold',
+                ha='center', va='center', zorder=3, clip_on=True,
                 bbox=dict(boxstyle='round,pad=0.45', facecolor=colores[n],
                           edgecolor=bordes[n], linewidth=1.5),
             )
+            self.textos.append(t)
+        self.fuente_base = FUENTE_BASE
 
-        ax.set_title('Árbol Semántico (Tableaux)', fontsize=13, fontweight='bold')
+        x0, x1, y0, y1 = self.limites
+        ax.set_xlim(x0, x1)
+        ax.set_ylim(y0, y1)
         ax.set_axis_off()
-        ax.margins(x=0.12, y=0.12)
         return True
 
-    def dibujar(self, figsize=(14, 10)):
-        self.fig = plt.figure(figsize=figsize)
-        ax = self.fig.add_subplot(111)
-        self.dibujar_en(ax)
-        plt.tight_layout()
+    # ---------- imagen / ventana aparte ----------
+    def _figura_a_medida(self, dpi=100):
+        """Figura cuyo tamaño en píxeles es el del dibujo (con tope): se ve todo y nada se encima."""
+        fig = plt.figure(figsize=(8, 6), dpi=dpi)
+        ax = fig.add_axes([0, 0, 1, 1])
+        if not self.dibujar_en(ax):
+            return fig, False
+        x0, x1, y0, y1 = self.limites
+        ancho, alto = x1 - x0, y1 - y0
+        escala = min(1.0, MAX_PIXELES_IMAGEN / max(ancho, alto))
+        fig.set_size_inches(ancho * escala / dpi, alto * escala / dpi)
+        for t in self.textos:
+            t.set_fontsize(self.fuente_base * escala)
+        return fig, True
+
+    def dibujar(self, figsize=None):
+        fig, _ = self._figura_a_medida()
         plt.show()
 
     def guardar(self, filename: str, figsize=None):
@@ -171,21 +243,8 @@ class RenderGrafo:
             fig.savefig(filename, dpi=120, bbox_inches='tight')
             plt.close(fig)
             return filename
-        G = self.construir_grafo()
-        if len(G.nodes()) == 0:
-            return filename
-        # El lienzo crece con el árbol para que quepa todo
-        if figsize is None:
-            hojas = max(1, sum(1 for n in G.nodes() if G.out_degree(n) == 0))
-            niveles = nx.dag_longest_path_length(G) + 1
-            # Cada nivel necesita altura para el bloque del camino
-            alto = max(8, 2.4 * niveles + 1.5)
-            ancho = max(10, 3.8 * hojas ** 0.85)
-            figsize = (min(ancho, 44), min(alto, 44))
-        fig = plt.figure(figsize=figsize)
-        ax = fig.add_subplot(111)
-        self.dibujar_en(ax)
-        fig.tight_layout()
-        fig.savefig(filename, dpi=180, bbox_inches='tight')
+        fig, dibujado = self._figura_a_medida()
+        if dibujado:
+            fig.savefig(filename, dpi=100)
         plt.close(fig)
         return filename
